@@ -1,1360 +1,54 @@
-# 기본 라이브러리
-import os
-import time
-import requests
-import xml.etree.ElementTree as ET
+# ============================================================
+# 서울·경기 10·15 부동산 정책 거래량 변화 Dashboard
+# Streamlit 전용 app.py
+# ============================================================
+
+from pathlib import Path
+import json
 
 import numpy as np
 import pandas as pd
 
-# 시각화
+import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-# 공간데이터
-import geopandas as gpd
-
-# 경고 메시지 정리
-import warnings
-warnings.filterwarnings("ignore")
-
-# ------------------------------------------------------------
-# 프로젝트 폴더 설정
-# ------------------------------------------------------------
-
-BASE_PATH = "/content/drive/MyDrive/real_estate_1015"
-
-RAW_PATH = f"{BASE_PATH}/data/raw"
-PROCESSED_PATH = f"{BASE_PATH}/data/processed"
-GEO_PATH = f"{BASE_PATH}/data/geo"
-
-os.makedirs(RAW_PATH, exist_ok=True)
-os.makedirs(PROCESSED_PATH, exist_ok=True)
-os.makedirs(GEO_PATH, exist_ok=True)
 
 # ============================================================
-# 공공데이터포털 API Key 불러오기
+# 1. Streamlit 기본 설정
 # ============================================================
 
-from google.colab import userdata
-from urllib.parse import unquote
-
-# Colab Secret에서 키 불러오기
-RAW_APT_KEY = userdata.get("APT_KEY")
-
-if RAW_APT_KEY is None:
-    raise ValueError(
-        "Colab 왼쪽 Secrets에 "
-        "'APT_KEY'를 등록해주세요."
-    )
-
-# 1. 앞뒤 공백, 탭, 줄바꿈 제거
-# 2. 혹시 Encoding 인증키를 넣었더라도 한 번 디코딩
-APT_KEY = unquote(
-    RAW_APT_KEY.strip()
+st.set_page_config(
+    page_title="10·15 부동산 정책 거래시장 변화",
+    page_icon="🏙️",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-print("API Key 불러오기 완료")
-print("키 길이 :", len(APT_KEY))
-
-# 보안을 위해 전체 키는 출력하지 않음
-print(
-    "키 확인 :",
-    APT_KEY[:4],
-    "...",
-    APT_KEY[-4:]
-)
-
-"""#서울 자치구 데이터 분석"""
 
 # ============================================================
-# 2. 서울 분석지역 및 분석기간 설정
+# 2. 분석 기준
 # ============================================================
-
-# 강남구, 서초구, 송파구, 용산구는 제외
-# 나머지 서울 21개 자치구만 분석
-
-SEOUL_REGIONS = {
-
-    "종로구": "11110",
-    "중구": "11140",
-
-    # "용산구": "11170",   # 제외
-
-    "성동구": "11200",
-    "광진구": "11215",
-    "동대문구": "11230",
-    "중랑구": "11260",
-    "성북구": "11290",
-    "강북구": "11305",
-    "도봉구": "11320",
-    "노원구": "11350",
-    "은평구": "11380",
-    "서대문구": "11410",
-    "마포구": "11440",
-    "양천구": "11470",
-    "강서구": "11500",
-    "구로구": "11530",
-    "금천구": "11545",
-    "영등포구": "11560",
-    "동작구": "11590",
-    "관악구": "11620",
-
-    # "서초구": "11650",   # 제외
-    # "강남구": "11680",   # 제외
-    # "송파구": "11710",   # 제외
-
-    "강동구": "11740"
-}
-
-# ------------------------------------------------------------
-# 정책 기준일
-# ------------------------------------------------------------
 
 POLICY_DATE = pd.Timestamp("2025-10-15")
 
-# ------------------------------------------------------------
-# 정확한 분석기간
-# ------------------------------------------------------------
-
 BEFORE_START = pd.Timestamp("2025-04-15")
-BEFORE_END   = pd.Timestamp("2025-10-14")
+BEFORE_END = pd.Timestamp("2025-10-14")
 
-AFTER_START  = pd.Timestamp("2025-10-15")
-AFTER_END    = pd.Timestamp("2026-04-14")
+AFTER_START = pd.Timestamp("2025-10-15")
+AFTER_END = pd.Timestamp("2026-04-14")
 
-# ------------------------------------------------------------
-# 각 기간의 일수
-# ------------------------------------------------------------
+BEFORE_DAYS = (
+    BEFORE_END - BEFORE_START
+).days + 1
 
-BEFORE_DAYS = (BEFORE_END - BEFORE_START).days + 1
-AFTER_DAYS = (AFTER_END - AFTER_START).days + 1
+AFTER_DAYS = (
+    AFTER_END - AFTER_START
+).days + 1
 
 
-print("분석 자치구 수 :", len(SEOUL_REGIONS))
-
-print(
-    "정책 이전 :",
-    BEFORE_START.date(),
-    "~",
-    BEFORE_END.date(),
-    f"({BEFORE_DAYS}일)"
-)
-
-print(
-    "정책 이후 :",
-    AFTER_START.date(),
-    "~",
-    AFTER_END.date(),
-    f"({AFTER_DAYS}일)"
-)
-
-
-print("\n분석 대상 자치구")
-
-for region in SEOUL_REGIONS:
-    print(region)
-
-"""#API 요청 월 만들기"""
-
-# ============================================================
-# 3. API 요청용 월 목록
-# ============================================================
-
-API_MONTHS = (
-
-    pd.period_range(
-        start="2025-04",
-        end="2026-04",
-        freq="M"
-    )
-
-    .strftime("%Y%m")
-
-    .tolist()
-)
-
-
-print(API_MONTHS)
-print("API 요청 개월 수 :", len(API_MONTHS))
-
-"""#국토부 실거래 API 함수"""
-
-# ============================================================
-# 국토교통부 아파트 매매 실거래가 API 함수
-# ============================================================
-
-import requests
-import pandas as pd
-import xml.etree.ElementTree as ET
-import time
-
-
-API_URL = (
-    "https://apis.data.go.kr/1613000/"
-    "RTMSDataSvcAptTradeDev/"
-    "getRTMSDataSvcAptTradeDev"
-)
-
-
-def fetch_apt_trade(lawd_cd, deal_ymd, num_rows=1000):
-
-    """
-    국토교통부 아파트 매매 실거래가 API
-
-    Parameters
-    ----------
-    lawd_cd : str
-        법정동 시군구 코드 앞 5자리
-        예) 종로구 11110
-
-    deal_ymd : str
-        계약년월 YYYYMM
-        예) 202509
-
-    num_rows : int
-        페이지당 요청 데이터 수
-
-    Returns
-    -------
-    pandas.DataFrame
-    """
-
-    all_rows = []
-
-    page_no = 1
-
-
-    while True:
-
-        params = {
-
-            # Decoding 인증키 사용
-            "serviceKey": APT_KEY,
-
-            # 지역코드
-            "LAWD_CD": str(lawd_cd),
-
-            # 계약년월
-            "DEAL_YMD": str(deal_ymd),
-
-            # 페이지
-            "pageNo": page_no,
-
-            # 페이지당 데이터 수
-            "numOfRows": num_rows
-        }
-
-
-        # ----------------------------------------------------
-        # API 요청
-        # ----------------------------------------------------
-
-        try:
-
-            response = requests.get(
-                API_URL,
-                params=params,
-                timeout=30
-            )
-
-
-        except requests.exceptions.RequestException as error:
-
-            print(
-                f"API 연결 오류 | "
-                f"{lawd_cd} / {deal_ymd}"
-            )
-
-            print(error)
-
-            return pd.DataFrame()
-
-
-        # ----------------------------------------------------
-        # HTTP 상태 확인
-        # ----------------------------------------------------
-
-        if response.status_code != 200:
-
-            print("=" * 60)
-
-            print(
-                f"API HTTP 오류 | "
-                f"{lawd_cd} / {deal_ymd}"
-            )
-
-            print(
-                "HTTP 상태코드 :",
-                response.status_code
-            )
-
-            print("\n서버 응답 내용")
-
-            print(
-                response.text[:1000]
-            )
-
-            print("=" * 60)
-
-            return pd.DataFrame()
-
-
-        # ----------------------------------------------------
-        # XML 파싱
-        # ----------------------------------------------------
-
-        try:
-
-            root = ET.fromstring(
-                response.content
-            )
-
-
-        except ET.ParseError:
-
-            print(
-                f"XML 변환 실패 | "
-                f"{lawd_cd} / {deal_ymd}"
-            )
-
-            print(
-                response.text[:1000]
-            )
-
-            return pd.DataFrame()
-
-
-        # ----------------------------------------------------
-        # 공공데이터 API 결과코드 확인
-        # ----------------------------------------------------
-
-        result_code = root.findtext(
-            ".//resultCode"
-        )
-
-        result_msg = root.findtext(
-            ".//resultMsg"
-        )
-
-
-        if result_code not in [
-            "000",
-            "00",
-            None
-        ]:
-
-            print("=" * 60)
-
-            print("공공데이터 API 응답 오류")
-
-            print(
-                "resultCode :",
-                result_code
-            )
-
-            print(
-                "resultMsg :",
-                result_msg
-            )
-
-            print("=" * 60)
-
-            return pd.DataFrame()
-
-
-        # ----------------------------------------------------
-        # 거래자료 추출
-        # ----------------------------------------------------
-
-        items = root.findall(
-            ".//item"
-        )
-
-
-        page_rows = []
-
-
-        for item in items:
-
-            row = {}
-
-
-            for child in item:
-
-                if child.text is None:
-
-                    row[child.tag] = ""
-
-                else:
-
-                    row[child.tag] = (
-                        child.text.strip()
-                    )
-
-
-            page_rows.append(row)
-
-
-        all_rows.extend(
-            page_rows
-        )
-
-
-        # ----------------------------------------------------
-        # 전체 데이터 수
-        # ----------------------------------------------------
-
-        total_count_text = (
-            root.findtext(
-                ".//totalCount"
-            )
-        )
-
-
-        if total_count_text:
-
-            total_count = int(
-                total_count_text
-            )
-
-        else:
-
-            total_count = len(
-                all_rows
-            )
-
-
-        # ----------------------------------------------------
-        # 진행상황 확인
-        # ----------------------------------------------------
-
-        print(
-            f"{lawd_cd} / {deal_ymd} "
-            f"| {len(all_rows):,}"
-            f"/{total_count:,}건"
-        )
-
-
-        # ----------------------------------------------------
-        # 모든 데이터 수집 완료
-        # ----------------------------------------------------
-
-        if len(all_rows) >= total_count:
-
-            break
-
-
-        if len(page_rows) == 0:
-
-            break
-
-
-        page_no += 1
-
-        # 서버 과부하 방지
-        time.sleep(0.05)
-
-
-    return pd.DataFrame(
-        all_rows
-    )
-
-# ============================================================
-# API Key 상태 확인
-# ============================================================
-
-print(
-    "APT_KEY 앞뒤 공백 여부 :",
-    APT_KEY != APT_KEY.strip()
-)
-
-print(
-    "탭 포함 여부 :",
-    "\t" in APT_KEY
-)
-
-print(
-    "줄바꿈 포함 여부 :",
-    "\n" in APT_KEY
-)
-
-print(
-    "URL Encoding 문자 % 포함 여부 :",
-    "%" in APT_KEY
-)
-
-print(
-    "API Key 길이 :",
-    len(APT_KEY)
-)
-
-print(
-    "API Key 일부 :",
-    APT_KEY[:4],
-    "...",
-    APT_KEY[-4:]
-)
-
-"""#API test"""
-
-# ============================================================
-# 종로구 2025년 9월 API 테스트
-# ============================================================
-
-test_df = fetch_apt_trade(
-    lawd_cd="11110",
-    deal_ymd="202509"
-)
-
-
-print("\n" + "=" * 60)
-
-print(
-    "종로구 2025년 9월 "
-    "아파트 거래 데이터"
-)
-
-print("=" * 60)
-
-print(
-    "거래건수 :",
-    len(test_df)
-)
-
-
-if len(test_df) > 0:
-
-    display(
-        test_df.head()
-    )
-
-    print("\n컬럼명")
-
-    print(
-        test_df.columns.tolist()
-    )
-
-else:
-
-    print(
-        "데이터를 가져오지 못했습니다."
-    )
-
-"""#서울 자치구 데이터 수집"""
-
-# ============================================================
-# 6. 서울 21개 자치구 실거래 데이터 수집
-# ============================================================
-
-all_region_data = []
-
-
-for region_name, lawd_cd in SEOUL_REGIONS.items():
-
-
-    # 지역별 저장파일
-    save_file = (
-
-        f"{RAW_PATH}/"
-        f"{lawd_cd}_{region_name}_"
-        f"202504_202604.csv"
-    )
-
-
-    # --------------------------------------------------------
-    # 이미 저장된 파일이 있으면 API 재호출하지 않기
-    # --------------------------------------------------------
-
-    if os.path.exists(save_file):
-
-        print(
-            f"[기존파일 사용] {region_name}"
-        )
-
-        region_df = pd.read_csv(
-            save_file,
-            dtype=str
-        )
-
-
-    else:
-
-        print(
-            f"\n[수집 시작] {region_name}"
-        )
-
-
-        monthly_data = []
-
-
-        for ym in API_MONTHS:
-
-            temp = fetch_apt_trade(
-
-                lawd_cd=lawd_cd,
-
-                deal_ymd=ym
-            )
-
-
-            print(
-                f"{region_name} / {ym} "
-                f": {len(temp):,}건"
-            )
-
-
-            if len(temp) > 0:
-
-                temp["region"] = (
-                    region_name
-                )
-
-                temp["lawd_cd"] = (
-                    lawd_cd
-                )
-
-                monthly_data.append(
-                    temp
-                )
-
-
-        # ----------------------------------------------------
-        # 13개월 자료 합치기
-        # ----------------------------------------------------
-
-        if len(monthly_data) > 0:
-
-            region_df = pd.concat(
-
-                monthly_data,
-
-                ignore_index=True
-            )
-
-        else:
-
-            region_df = pd.DataFrame()
-
-
-        # ----------------------------------------------------
-        # 원자료 저장
-        # ----------------------------------------------------
-
-        region_df.to_csv(
-
-            save_file,
-
-            index=False,
-
-            encoding="utf-8-sig"
-        )
-
-
-        print(
-            f"[저장 완료] "
-            f"{region_name} "
-            f"{len(region_df):,}건"
-        )
-
-
-    # 캐시에서 읽었을 때도 지역정보 추가
-    region_df["region"] = region_name
-    region_df["lawd_cd"] = lawd_cd
-
-
-    all_region_data.append(
-        region_df
-    )
-
-
-# ============================================================
-# 21개 자치구 데이터 통합
-# ============================================================
-
-transactions_raw = pd.concat(
-
-    all_region_data,
-
-    ignore_index=True
-)
-
-
-print("\n전체 원자료")
-
-print(
-    f"{len(transactions_raw):,}건"
-)
-
-
-display(
-    transactions_raw.head()
-)
-
-"""#실거래 데이터 전처리"""
-
-# ============================================================
-# 7. 아파트 실거래 데이터 전처리
-# ============================================================
-
-def refine_transactions(df):
-
-    df = df.copy()
-
-
-    # --------------------------------------------------------
-    # 필요한 컬럼 확인
-    # --------------------------------------------------------
-
-    required_cols = [
-
-        "dealYear",
-        "dealMonth",
-        "dealDay",
-        "dealAmount",
-        "excluUseAr",
-        "aptNm",
-        "region"
-    ]
-
-
-    missing_cols = [
-
-        col
-
-        for col in required_cols
-
-        if col not in df.columns
-    ]
-
-
-    if len(missing_cols) > 0:
-
-        raise ValueError(
-            f"필수 컬럼 누락 : {missing_cols}"
-        )
-
-
-    # --------------------------------------------------------
-    # 컬럼 이름 정리
-    # --------------------------------------------------------
-
-    rename_dict = {
-
-        "aptNm":
-        "apartment_name",
-
-        "umdNm":
-        "dong_name",
-
-        "dealAmount":
-        "deal_amount_manwon",
-
-        "excluUseAr":
-        "area_m2",
-
-        "floor":
-        "floor",
-
-        "buildYear":
-        "build_year",
-
-        "cdealDay":
-        "cancel_date_raw"
-    }
-
-
-    df.rename(
-
-        columns=rename_dict,
-
-        inplace=True
-    )
-
-
-    # --------------------------------------------------------
-    # 날짜 숫자형 변환
-    # --------------------------------------------------------
-
-    df["dealYear"] = pd.to_numeric(
-        df["dealYear"],
-        errors="coerce"
-    )
-
-    df["dealMonth"] = pd.to_numeric(
-        df["dealMonth"],
-        errors="coerce"
-    )
-
-    df["dealDay"] = pd.to_numeric(
-        df["dealDay"],
-        errors="coerce"
-    )
-
-
-    # --------------------------------------------------------
-    # 실제 계약일 생성
-    # --------------------------------------------------------
-
-    df["deal_date"] = pd.to_datetime(
-
-        {
-
-            "year": df["dealYear"],
-
-            "month": df["dealMonth"],
-
-            "day": df["dealDay"]
-        },
-
-        errors="coerce"
-    )
-
-
-    # --------------------------------------------------------
-    # 거래금액
-    # API 단위 = 만원
-    # --------------------------------------------------------
-
-    df["deal_amount_manwon"] = (
-
-        df["deal_amount_manwon"]
-
-        .astype(str)
-
-        .str.replace(
-            ",",
-            "",
-            regex=False
-        )
-
-        .str.strip()
-    )
-
-
-    df["deal_amount_manwon"] = (
-        pd.to_numeric(
-
-            df["deal_amount_manwon"],
-
-            errors="coerce"
-        )
-    )
-
-
-    # 억원 단위 컬럼
-    df["price_eok"] = (
-
-        df["deal_amount_manwon"]
-
-        / 10000
-    )
-
-
-    # --------------------------------------------------------
-    # 전용면적
-    # --------------------------------------------------------
-
-    df["area_m2"] = pd.to_numeric(
-
-        df["area_m2"],
-
-        errors="coerce"
-    )
-
-
-    # --------------------------------------------------------
-    # 계약해제 거래 제거
-    # --------------------------------------------------------
-
-    if "cancel_date_raw" not in df.columns:
-
-        df["cancel_date_raw"] = ""
-
-
-    df["cancel_date_raw"] = (
-
-        df["cancel_date_raw"]
-
-        .fillna("")
-
-        .astype(str)
-
-        .str.strip()
-    )
-
-
-    cancelled = (
-
-        df["cancel_date_raw"] != ""
-    )
-
-
-    print(
-        "계약해제 거래 제외 :",
-        cancelled.sum(),
-        "건"
-    )
-
-
-    df = df[
-        ~cancelled
-    ].copy()
-
-
-    # --------------------------------------------------------
-    # 필수값 결측치 제거
-    # --------------------------------------------------------
-
-    df = df.dropna(
-
-        subset=[
-
-            "deal_date",
-            "region",
-            "deal_amount_manwon"
-        ]
-    )
-
-
-    # --------------------------------------------------------
-    # 완전 중복행 제거
-    # --------------------------------------------------------
-
-    df = df.drop_duplicates()
-
-
-    df.reset_index(
-        drop=True,
-        inplace=True
-    )
-
-
-    return df
-
-
-transactions = refine_transactions(
-    transactions_raw
-)
-
-
-print(
-    "전처리 후 거래건수 :",
-    f"{len(transactions):,}"
-)
-
-
-display(
-    transactions[
-        [
-            "deal_date",
-            "region",
-            "dong_name",
-            "apartment_name",
-            "price_eok",
-            "area_m2"
-        ]
-    ].head()
-)
-
-"""#정책 전후 6개월 기간 정리"""
-
-# ============================================================
-# 8. 정확한 정책 전후 6개월 데이터만 추출
-# ============================================================
-
-analysis = transactions[
-
-    transactions["deal_date"].between(
-
-        BEFORE_START,
-
-        AFTER_END
-    )
-
-].copy()
-
-
-# ------------------------------------------------------------
-# 정책 이전 / 이후 구분
-# ------------------------------------------------------------
-
-analysis["period"] = np.where(
-
-    analysis["deal_date"] < POLICY_DATE,
-
-    "정책 이전",
-
-    "정책 이후"
-)
-
-
-# ------------------------------------------------------------
-# 정책 발표일 기준 상대 날짜
-# ------------------------------------------------------------
-
-analysis["relative_day"] = (
-
-    analysis["deal_date"]
-
-    - POLICY_DATE
-
-).dt.days
-
-
-# ------------------------------------------------------------
-# 월 정보
-# ------------------------------------------------------------
-
-analysis["year_month"] = (
-
-    analysis["deal_date"]
-
-    .dt.to_period("M")
-
-    .dt.to_timestamp()
-)
-
-
-print(
-    "분석 데이터 :",
-    f"{len(analysis):,}건"
-)
-
-
-print("\n정책 전후 거래건수")
-
-display(
-
-    analysis[
-        "period"
-    ].value_counts()
-)
-
-"""#분석대상 수 검증"""
-
-# ============================================================
-# 9. 데이터 검증
-# ============================================================
-
-print(
-    "분석 자치구 수 :",
-    analysis["region"].nunique()
-)
-
-
-print("\n자치구 목록")
-
-print(
-    sorted(
-        analysis["region"].unique()
-    )
-)
-
-
-print("\n기간")
-
-print(
-    analysis["deal_date"].min()
-)
-
-print(
-    analysis["deal_date"].max()
-)
-
-
-print("\n자치구별 거래건수")
-
-display(
-
-    analysis[
-        "region"
-    ]
-
-    .value_counts()
-
-    .sort_index()
-)
-
-"""#자치구별 정책 전후 거래량"""
-
-# ============================================================
-# 10. 자치구별 정책 전후 거래량 집계
-# ============================================================
-
-district_period = (
-
-    analysis
-
-    .groupby(
-        [
-            "region",
-            "period"
-        ]
-    )
-
-    .size()
-
-    .reset_index(
-        name="transaction_count"
-    )
-)
-
-
-display(
-    district_period.head()
-)
-
-"""#bEFORE AFTER 비교"""
-
-# ============================================================
-# 11. 정책 전후 비교 테이블
-# ============================================================
-
-summary = (
-
-    district_period
-
-    .pivot(
-
-        index="region",
-
-        columns="period",
-
-        values="transaction_count"
-    )
-
-    .fillna(0)
-
-    .reset_index()
-)
-
-
-summary.columns.name = None
-
-
-# ------------------------------------------------------------
-# 컬럼명 변경
-# ------------------------------------------------------------
-
-summary = summary.rename(
-
-    columns={
-
-        "정책 이전":
-        "before_count",
-
-        "정책 이후":
-        "after_count"
-    }
-)
-
-
-# ------------------------------------------------------------
-# 거래량 증감
-# ------------------------------------------------------------
-
-summary["count_change"] = (
-
-    summary["after_count"]
-
-    - summary["before_count"]
-)
-
-
-# ------------------------------------------------------------
-# 단순 총거래량 증감률
-# ------------------------------------------------------------
-
-summary["count_change_pct"] = (
-
-    summary["count_change"]
-
-    / summary["before_count"]
-
-    * 100
-)
-
-
-# ------------------------------------------------------------
-# 일평균 거래량
-# ------------------------------------------------------------
-
-summary["before_daily_avg"] = (
-
-    summary["before_count"]
-
-    / BEFORE_DAYS
-)
-
-
-summary["after_daily_avg"] = (
-
-    summary["after_count"]
-
-    / AFTER_DAYS
-)
-
-
-# ------------------------------------------------------------
-# 일평균 거래량 증감률
-# ------------------------------------------------------------
-
-summary["daily_avg_change_pct"] = (
-
-    (
-        summary["after_daily_avg"]
-
-        - summary["before_daily_avg"]
-    )
-
-    / summary["before_daily_avg"]
-
-    * 100
-)
-
-
-summary = summary.sort_values(
-
-    "daily_avg_change_pct"
-)
-
-
-display(
-    summary.round(2)
-)
-
-"""#서울 GeoJSON 준비"""
-
-# ============================================================
-# GeoJSON 폴더
-# ============================================================
-
-GEO_PATH = f"{BASE_PATH}/data/geo"
-
-os.makedirs(
-    GEO_PATH,
-    exist_ok=True
-)
-
-"""#GeoJSON 불러오기 + 자치구명 확인"""
-
-# ============================================================
-# 서울시 자치구 GeoJSON 불러오기
-# ============================================================
-
-!pip -q install geopandas
-
-import geopandas as gpd
-import pandas as pd
-import numpy as np
-import json
-
-
-GEOJSON_PATH = (
-    f"{GEO_PATH}/"
-    "seoul_sigungu.geojson"
-)
-
-
-seoul_gdf = gpd.read_file(
-    GEOJSON_PATH
-)
-
-
-# 좌표계 통일
-seoul_gdf = seoul_gdf.to_crs(
-    epsg=4326
-)
-
-
-print("GeoJSON 컬럼")
-print(
-    seoul_gdf.columns.tolist()
-)
-
-display(
-    seoul_gdf.head()
-)
-
-"""#GeoJSON 자치구명 자동 인식"""
-
-# ============================================================
-# GeoJSON 자치구명 컬럼 자동 찾기
-# ============================================================
-
-NAME_CANDIDATES = [
-
-    "SIG_KOR_NM",
-    "SGG_NM",
-    "ADM_SECT_NM",
-    "SGG_NAME",
-    "sggnm",
-    "name",
-    "NAME"
-]
-
-
-geo_name_col = None
-
-
-for col in NAME_CANDIDATES:
-
-    if col in seoul_gdf.columns:
-
-        geo_name_col = col
-
-        break
-
-
-if geo_name_col is None:
-
-    raise ValueError(
-        "자치구명 컬럼을 자동으로 찾지 못했습니다.\n"
-        "위에서 출력된 GeoJSON 컬럼을 확인해주세요."
-    )
-
-
-print(
-    "사용할 자치구명 컬럼 :",
-    geo_name_col
-)
-
-
-# ------------------------------------------------------------
-# 자치구명 정리
-# ------------------------------------------------------------
-
-seoul_gdf["district"] = (
-
-    seoul_gdf[geo_name_col]
-
-    .astype(str)
-
-    .str.replace(
-        "서울특별시",
-        "",
-        regex=False
-    )
-
-    .str.strip()
-)
-
-
-print(
-    sorted(
-        seoul_gdf["district"].unique()
-    )
-)
-
-"""#기존 규제지역 4개 지정"""
-
-# ============================================================
-# 기존 규제지역
-# ============================================================
-
-EXISTING_REGULATED = [
-
+# 서울 기존 규제지역
+SEOUL_EXISTING_REGULATED = [
     "강남구",
     "서초구",
     "송파구",
@@ -1362,1220 +56,1719 @@ EXISTING_REGULATED = [
 ]
 
 
-seoul_gdf["regulation_type"] = np.where(
+# 지도 색상
+# 음수(거래 감소) = 빨강
+# 0 = 흰색
+# 양수(거래 증가) = 파랑
 
-    seoul_gdf["district"].isin(
-        EXISTING_REGULATED
-    ),
+CHANGE_COLORSCALE = [
+    [0.00, "#9c0000"],
+    [0.25, "#d6604d"],
+    [0.50, "#f7f7f7"],
+    [0.75, "#4393c3"],
+    [1.00, "#2166ac"]
+]
 
-    "기존 규제지역",
 
-    "2025.10.15 신규 규제지역"
+# ============================================================
+# 3. CSS
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        max-width: 1550px;
+    }
+
+    h1 {
+        font-weight: 750;
+        letter-spacing: -1.5px;
+    }
+
+    h2, h3 {
+        letter-spacing: -0.7px;
+    }
+
+    [data-testid="stMetric"] {
+        background-color: white;
+        border: 1px solid #e9e9e9;
+        border-radius: 12px;
+        padding: 18px;
+        min-height: 125px;
+    }
+
+    [data-testid="stSidebar"] {
+        background-color: #fafafa;
+    }
+
+    .small-note {
+        font-size: 0.86rem;
+        color: #777777;
+        line-height: 1.5;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
 
-display(
+# ============================================================
+# 4. 파일 경로
+#
+# GitHub 구조
+#
+# repository/
+# ├── app.py
+# ├── requirements.txt
+# └── data/
+#     ├── seoul_policy_summary.csv
+#     ├── ...
+#     └── gyeonggi_policy_map.geojson
+# ============================================================
 
-    seoul_gdf[
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 
-        [
-            "district",
-            "regulation_type"
-        ]
+
+# ============================================================
+# 5. 필요한 파일 목록
+# ============================================================
+
+FILES = {
+
+    "seoul_summary":
+        DATA_DIR / "seoul_policy_summary.csv",
+
+    "seoul_daily":
+        DATA_DIR / "seoul_daily_transactions.csv",
+
+    "seoul_district_daily":
+        DATA_DIR / "seoul_district_daily.csv",
+
+    "seoul_monthly":
+        DATA_DIR / "seoul_monthly_transactions.csv",
+
+    "seoul_geojson":
+        DATA_DIR / "seoul_policy_map.geojson",
+
+
+    "gyeonggi_summary":
+        DATA_DIR / "gyeonggi_policy_summary.csv",
+
+    "gyeonggi_daily":
+        DATA_DIR / "gyeonggi_daily_transactions.csv",
+
+    "gyeonggi_district_daily":
+        DATA_DIR / "gyeonggi_district_daily.csv",
+
+    "gyeonggi_monthly":
+        DATA_DIR / "gyeonggi_monthly_transactions.csv",
+
+    "gyeonggi_geojson":
+        DATA_DIR / "gyeonggi_policy_map.geojson"
+}
+
+
+# ============================================================
+# 6. 파일 존재 확인
+# ============================================================
+
+missing_files = [
+
+    path.name
+
+    for path in FILES.values()
+
+    if not path.exists()
+]
+
+
+if missing_files:
+
+    st.error(
+        "다음 데이터 파일을 찾을 수 없습니다."
+    )
+
+    st.code(
+        "\n".join(missing_files)
+    )
+
+    st.info(
+        "GitHub 저장소의 data 폴더에 "
+        "위 파일이 있는지 확인해주세요."
+    )
+
+    st.stop()
+
+
+# ============================================================
+# 7. 데이터 로딩
+# ============================================================
+
+@st.cache_data
+def load_data():
+
+    # --------------------------------------------------------
+    # 서울
+    # --------------------------------------------------------
+
+    seoul_summary = pd.read_csv(
+        FILES["seoul_summary"]
+    )
+
+    seoul_daily = pd.read_csv(
+        FILES["seoul_daily"]
+    )
+
+    seoul_district_daily = pd.read_csv(
+        FILES["seoul_district_daily"]
+    )
+
+    seoul_monthly = pd.read_csv(
+        FILES["seoul_monthly"]
+    )
+
+
+    with open(
+        FILES["seoul_geojson"],
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        seoul_geojson = json.load(f)
+
+
+    # --------------------------------------------------------
+    # 경기도
+    # --------------------------------------------------------
+
+    gyeonggi_summary = pd.read_csv(
+        FILES["gyeonggi_summary"]
+    )
+
+    gyeonggi_daily = pd.read_csv(
+        FILES["gyeonggi_daily"]
+    )
+
+    gyeonggi_district_daily = pd.read_csv(
+        FILES["gyeonggi_district_daily"]
+    )
+
+    gyeonggi_monthly = pd.read_csv(
+        FILES["gyeonggi_monthly"]
+    )
+
+
+    with open(
+        FILES["gyeonggi_geojson"],
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        gyeonggi_geojson = json.load(f)
+
+
+    # --------------------------------------------------------
+    # 날짜형 변환
+    # --------------------------------------------------------
+
+    seoul_daily["deal_date"] = pd.to_datetime(
+        seoul_daily["deal_date"]
+    )
+
+    seoul_district_daily["deal_date"] = pd.to_datetime(
+        seoul_district_daily["deal_date"]
+    )
+
+    seoul_monthly["year_month"] = pd.to_datetime(
+        seoul_monthly["year_month"]
+    )
+
+
+    gyeonggi_daily["deal_date"] = pd.to_datetime(
+        gyeonggi_daily["deal_date"]
+    )
+
+    gyeonggi_district_daily["deal_date"] = pd.to_datetime(
+        gyeonggi_district_daily["deal_date"]
+    )
+
+    gyeonggi_monthly["year_month"] = pd.to_datetime(
+        gyeonggi_monthly["year_month"]
+    )
+
+
+    return (
+        seoul_summary,
+        seoul_daily,
+        seoul_district_daily,
+        seoul_monthly,
+        seoul_geojson,
+
+        gyeonggi_summary,
+        gyeonggi_daily,
+        gyeonggi_district_daily,
+        gyeonggi_monthly,
+        gyeonggi_geojson
+    )
+
+
+(
+    seoul_summary,
+    seoul_daily,
+    seoul_district_daily,
+    seoul_monthly,
+    seoul_geojson,
+
+    gyeonggi_summary,
+    gyeonggi_daily,
+    gyeonggi_district_daily,
+    gyeonggi_monthly,
+    gyeonggi_geojson
+
+) = load_data()
+
+
+# ============================================================
+# 8. Summary 데이터 공통 전처리
+# ============================================================
+
+def prepare_summary(df):
+
+    df = df.copy()
+
+
+    numeric_columns = [
+
+        "before_count",
+        "after_count",
+
+        "before_daily_avg",
+        "after_daily_avg",
+
+        "count_change_pct",
+        "daily_avg_change_pct"
     ]
 
+
+    for col in numeric_columns:
+
+        if col in df.columns:
+
+            df[col] = pd.to_numeric(
+                df[col],
+                errors="coerce"
+            )
+
+
+    # --------------------------------------------------------
+    # 점유율 정보가 없는 경우 자동 계산
+    #
+    # 경기도 데이터에는 원래 없으므로 여기에서 계산
+    # --------------------------------------------------------
+
+    total_before = (
+        df["before_count"].sum()
+    )
+
+    total_after = (
+        df["after_count"].sum()
+    )
+
+
+    df["before_share_pct"] = (
+
+        df["before_count"]
+
+        / total_before
+
+        * 100
+    )
+
+
+    df["after_share_pct"] = (
+
+        df["after_count"]
+
+        / total_after
+
+        * 100
+    )
+
+
+    df["share_change_pp"] = (
+
+        df["after_share_pct"]
+
+        - df["before_share_pct"]
+    )
+
+
+    if "lawd_cd" in df.columns:
+
+        df["lawd_cd"] = (
+
+            df["lawd_cd"]
+
+            .astype(str)
+
+            .str.replace(
+                ".0",
+                "",
+                regex=False
+            )
+
+            .str.zfill(5)
+        )
+
+
+    return df
+
+
+seoul_summary = prepare_summary(
+    seoul_summary
 )
 
-"""#summary와 GeoJSON 결합"""
+gyeonggi_summary = prepare_summary(
+    gyeonggi_summary
+)
+
 
 # ============================================================
-# 거래량 분석결과 + GeoJSON 결합
+# 9. GeoJSON 라벨 위치 추출
 # ============================================================
 
-map_gdf = seoul_gdf.merge(
+def get_geo_label_data(geojson):
 
+    rows = []
+
+
+    for feature in geojson.get(
+        "features",
+        []
+    ):
+
+        properties = feature.get(
+            "properties",
+            {}
+        )
+
+
+        feature_id = str(
+            feature.get(
+                "id",
+                ""
+            )
+        )
+
+
+        lon = properties.get(
+            "label_lon"
+        )
+
+        lat = properties.get(
+            "label_lat"
+        )
+
+
+        if (
+            lon is None
+            or lat is None
+        ):
+
+            continue
+
+
+        try:
+
+            lon = float(lon)
+            lat = float(lat)
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            continue
+
+
+        rows.append({
+
+            "feature_id":
+                feature_id,
+
+            "label_lon":
+                lon,
+
+            "label_lat":
+                lat,
+
+            "district":
+                properties.get(
+                    "district"
+                ),
+
+            "name":
+                properties.get(
+                    "name"
+                ),
+
+            "lawd_cd":
+                str(
+                    properties.get(
+                        "lawd_cd",
+                        feature_id
+                    )
+                )
+        })
+
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+# ============================================================
+# 10. 서울 지도
+# ============================================================
+
+def make_seoul_map(
     summary,
+    geojson,
+    metric_col,
+    metric_name
+):
 
-    left_on="district",
+    map_df = summary.copy()
 
-    right_on="region",
 
-    how="left"
-)
-
-
-print(
-    "GeoJSON 자치구 수 :",
-    len(map_gdf)
-)
-
-
-display(
-
-    map_gdf[
-
-        [
-            "district",
-            "regulation_type",
-            "before_count",
-            "after_count",
-            "daily_avg_change_pct"
-        ]
-
-    ]
-)
-
-"""#자치구 이름이 지도 가운데 나타나도록 좌표 생성"""
-
-# ============================================================
-# 자치구 라벨 위치 계산
-# ============================================================
-
-# 서울지역 좌표계로 잠시 변경
-temp_gdf = map_gdf.to_crs(
-    epsg=5179
-)
-
-
-# 각 폴리곤 내부에 위치하는 점 생성
-label_points = (
-    temp_gdf.geometry
-    .representative_point()
-)
-
-
-# 다시 위경도 좌표계로 변환
-label_points = gpd.GeoSeries(
-
-    label_points,
-
-    crs="EPSG:5179"
-
-).to_crs(
-    epsg=4326
-)
-
-
-map_gdf["label_lon"] = (
-    label_points.x.values
-)
-
-map_gdf["label_lat"] = (
-    label_points.y.values
-)
-
-"""#Streamlit용 GeoJSON으로 저장"""
-
-# ============================================================
-# Streamlit용 GeoJSON 생성
-# ============================================================
-
-# ECharts가 자치구명을 인식할 수 있도록
-# name 속성도 추가
-map_gdf["name"] = (
-    map_gdf["district"]
-)
-
-
-geojson_dict = json.loads(
-    map_gdf.to_json()
-)
-
-
-# feature id도 자치구명으로 변경
-for feature in geojson_dict["features"]:
-
-    district_name = (
-        feature["properties"]["district"]
-    )
-
-    feature["id"] = district_name
-
-
-OUTPUT_GEOJSON = (
-
-    f"{PROCESSED_PATH}/"
-    "seoul_policy_map.geojson"
-)
-
-
-with open(
-
-    OUTPUT_GEOJSON,
-
-    "w",
-
-    encoding="utf-8"
-
-) as f:
-
-    json.dump(
-
-        geojson_dict,
-
-        f,
-
-        ensure_ascii=False
-    )
-
-
-print(
-    "GeoJSON 저장 완료"
-)
-
-print(
-    OUTPUT_GEOJSON
-)
-
-"""#첨부 이미지와 비슷한 서울 지도 만들기"""
-
-# ============================================================
-# 서울 자치구 거래량 증감률 지도
-# ============================================================
-
-import plotly.graph_objects as go
-import numpy as np
-
-
-# ------------------------------------------------------------
-# 분석지역 / 기존 규제지역 분리
-# ------------------------------------------------------------
-
-analysis_map = map_gdf[
-
-    ~map_gdf["district"].isin(
-        EXISTING_REGULATED
-    )
-
-].copy()
-
-
-existing_map = map_gdf[
-
-    map_gdf["district"].isin(
-        EXISTING_REGULATED
-    )
-
-].copy()
-
-
-# ------------------------------------------------------------
-# 색상범위 대칭 설정
-# ------------------------------------------------------------
-
-max_abs = np.nanmax(
-
-    np.abs(
-        analysis_map[
-            "daily_avg_change_pct"
-        ]
-    )
-
-)
-
-
-# 너무 작은 경우 방지
-max_abs = max(
-    max_abs,
-    1
-)
-
-
-# ------------------------------------------------------------
-# 지도 생성
-# ------------------------------------------------------------
-
-fig_map = go.Figure()
-
-
-# ============================================================
-# 21개 신규 규제지역
-# ============================================================
-
-custom_data = np.column_stack(
-
-    [
-
-        analysis_map[
-            "before_count"
-        ],
-
-        analysis_map[
-            "after_count"
-        ],
-
-        analysis_map[
-            "before_daily_avg"
-        ],
-
-        analysis_map[
-            "after_daily_avg"
-        ],
-
-        analysis_map[
-            "daily_avg_change_pct"
-        ]
-    ]
-
-)
-
-
-fig_map.add_trace(
-
-    go.Choropleth(
-
-        geojson=geojson_dict,
-
-        locations=analysis_map[
-            "district"
-        ],
-
-        z=analysis_map[
-            "daily_avg_change_pct"
-        ],
-
-        featureidkey="id",
-
-        zmin=-max_abs,
-
-        zmax=max_abs,
-
-        zmid=0,
-
-        colorscale=[
-
-            [0.0, "#9c0000"],
-
-            [0.25, "#d6604d"],
-
-            [0.5, "#f7f7f7"],
-
-            [0.75, "#4393c3"],
-
-            [1.0, "#2166ac"]
-
-        ],
-
-        marker_line_color="white",
-
-        marker_line_width=1.2,
-
-        colorbar=dict(
-
-            title="거래량<br>증감률(%)",
-
-            thickness=14
-        ),
-
-        customdata=custom_data,
-
-        hovertemplate=(
-
-            "<b>%{location}</b><br><br>"
-
-            "정책 이전 거래량: "
-            "%{customdata[0]:,.0f}건<br>"
-
-            "정책 이후 거래량: "
-            "%{customdata[1]:,.0f}건<br>"
-
-            "정책 이전 일평균: "
-            "%{customdata[2]:.2f}건<br>"
-
-            "정책 이후 일평균: "
-            "%{customdata[3]:.2f}건<br>"
-
-            "증감률: "
-            "%{customdata[4]:.1f}%"
-
-            "<extra></extra>"
+    map_df[metric_col] = (
+        pd.to_numeric(
+            map_df[metric_col],
+            errors="coerce"
         )
     )
-)
 
-# ============================================================
-# 기존 규제지역 4개
-# ============================================================
 
-fig_map.add_trace(
+    valid_values = (
 
-    go.Choropleth(
+        map_df[
+            metric_col
+        ]
 
-        geojson=geojson_dict,
+        .dropna()
 
-        locations=existing_map[
-            "district"
-        ],
+        .abs()
+    )
 
-        z=[1] * len(existing_map),
 
-        featureidkey="id",
+    if len(valid_values) > 0:
 
-        colorscale=[
+        max_abs = max(
+            valid_values.max(),
+            1
+        )
 
-            [0, "#ad0000"],
-            [1, "#ad0000"]
+    else:
 
-        ],
+        max_abs = 1
 
-        showscale=False,
 
-        marker_line_color="white",
+    fig = go.Figure()
 
-        marker_line_width=1.8,
 
-        name="기존 규제지역",
+    # --------------------------------------------------------
+    # 신규 규제지역 21개
+    # --------------------------------------------------------
 
-        hovertemplate=(
+    custom_data = np.column_stack(
+        [
 
-            "<b>%{location}</b><br>"
+            map_df[
+                "before_count"
+            ],
 
-            "기존 규제지역<br>"
+            map_df[
+                "after_count"
+            ],
 
-            "이번 거래량 분석에서 제외"
+            map_df[
+                "before_daily_avg"
+            ],
 
-            "<extra></extra>"
+            map_df[
+                "after_daily_avg"
+            ],
+
+            map_df[
+                metric_col
+            ]
+        ]
+    )
+
+
+    fig.add_trace(
+
+        go.Choropleth(
+
+            geojson=geojson,
+
+            locations=map_df[
+                "region"
+            ],
+
+            z=map_df[
+                metric_col
+            ],
+
+            featureidkey="id",
+
+            zmin=-max_abs,
+
+            zmax=max_abs,
+
+            zmid=0,
+
+            colorscale=(
+                CHANGE_COLORSCALE
+            ),
+
+            marker_line_color=(
+                "white"
+            ),
+
+            marker_line_width=1.2,
+
+            colorbar=dict(
+
+                title=metric_name,
+
+                thickness=13,
+
+                len=0.55
+            ),
+
+            customdata=custom_data,
+
+            hovertemplate=(
+
+                "<b>%{location}</b>"
+                "<br><br>"
+
+                "정책 이전 거래량: "
+                "%{customdata[0]:,.0f}건"
+                "<br>"
+
+                "정책 이후 거래량: "
+                "%{customdata[1]:,.0f}건"
+                "<br>"
+
+                "정책 이전 일평균: "
+                "%{customdata[2]:.2f}건"
+                "<br>"
+
+                "정책 이후 일평균: "
+                "%{customdata[3]:.2f}건"
+                "<br>"
+
+                f"{metric_name}: "
+                "%{customdata[4]:.2f}"
+
+                "<extra></extra>"
+            )
         )
     )
-)
 
 
-# ============================================================
-# 일반 21개구 이름
-# ============================================================
+    # --------------------------------------------------------
+    # 기존 규제지역
+    # --------------------------------------------------------
 
-fig_map.add_trace(
+    fig.add_trace(
 
-    go.Scattergeo(
+        go.Choropleth(
 
-        lon=analysis_map[
-            "label_lon"
-        ],
+            geojson=geojson,
 
-        lat=analysis_map[
-            "label_lat"
-        ],
+            locations=(
+                SEOUL_EXISTING_REGULATED
+            ),
 
-        text=analysis_map[
-            "district"
-        ],
+            z=[1, 1, 1, 1],
 
-        mode="text",
+            featureidkey="id",
 
-        textfont=dict(
+            colorscale=[
 
-            size=11,
+                [0, "#7f0000"],
+                [1, "#7f0000"]
+            ],
 
-            color="#222222"
-        ),
+            showscale=False,
 
-        hoverinfo="skip",
+            marker_line_color="white",
 
-        showlegend=False
+            marker_line_width=1.8,
+
+            hovertemplate=(
+
+                "<b>%{location}</b>"
+                "<br>기존 규제지역"
+                "<br>이번 변화량 분석 제외"
+
+                "<extra></extra>"
+            )
+        )
     )
-)
 
 
-# ============================================================
-# 기존 규제지역 이름
-# ============================================================
+    # --------------------------------------------------------
+    # 지도 라벨
+    # --------------------------------------------------------
 
-fig_map.add_trace(
-
-    go.Scattergeo(
-
-        lon=existing_map[
-            "label_lon"
-        ],
-
-        lat=existing_map[
-            "label_lat"
-        ],
-
-        text=existing_map[
-            "district"
-        ],
-
-        mode="text",
-
-        textfont=dict(
-
-            size=13,
-
-            color="white",
-
-            family="Arial Black"
-        ),
-
-        hoverinfo="skip",
-
-        showlegend=False
+    label_df = get_geo_label_data(
+        geojson
     )
-)
 
 
-# ============================================================
-# 지도 스타일
-# ============================================================
+    if not label_df.empty:
 
-fig_map.update_geos(
-
-    fitbounds="locations",
-
-    visible=False,
-
-    projection_type="mercator"
-)
+        label_df[
+            "label_name"
+        ] = label_df[
+            "feature_id"
+        ]
 
 
-fig_map.update_layout(
+        analysis_labels = label_df[
+            ~label_df[
+                "feature_id"
+            ].isin(
+                SEOUL_EXISTING_REGULATED
+            )
+        ]
 
-    title=dict(
 
-        text=(
+        existing_labels = label_df[
+            label_df[
+                "feature_id"
+            ].isin(
+                SEOUL_EXISTING_REGULATED
+            )
+        ]
 
-            "<b>10·15 대책 전후 "
-            "서울 아파트 거래량 변화</b>"
-            "<br>"
-            "<sup>"
-            "강남·서초·송파·용산은 "
-            "기존 규제지역으로 분석 제외"
-            "</sup>"
-        ),
 
-        x=0.02
-    ),
+        fig.add_trace(
 
-    height=750,
+            go.Scattergeo(
 
-    paper_bgcolor="white",
+                lon=analysis_labels[
+                    "label_lon"
+                ],
 
-    margin=dict(
+                lat=analysis_labels[
+                    "label_lat"
+                ],
 
-        l=20,
-        r=20,
-        t=90,
-        b=20
+                text=analysis_labels[
+                    "label_name"
+                ],
+
+                mode="text",
+
+                textfont=dict(
+                    size=10,
+                    color="#222222"
+                ),
+
+                hoverinfo="skip",
+
+                showlegend=False
+            )
+        )
+
+
+        fig.add_trace(
+
+            go.Scattergeo(
+
+                lon=existing_labels[
+                    "label_lon"
+                ],
+
+                lat=existing_labels[
+                    "label_lat"
+                ],
+
+                text=existing_labels[
+                    "label_name"
+                ],
+
+                mode="text",
+
+                textfont=dict(
+                    size=11,
+                    color="white"
+                ),
+
+                hoverinfo="skip",
+
+                showlegend=False
+            )
+        )
+
+
+    # --------------------------------------------------------
+    # 지도 스타일
+    # --------------------------------------------------------
+
+    fig.update_geos(
+
+        fitbounds="locations",
+
+        visible=False,
+
+        projection_type="mercator"
     )
-)
 
 
-fig_map.show()
+    fig.update_layout(
 
-"""#Streamlit용 데이터 하나 더 만들기"""
+        height=650,
+
+        paper_bgcolor="white",
+
+        margin=dict(
+            l=0,
+            r=0,
+            t=10,
+            b=0
+        )
+    )
+
+
+    return fig
+
 
 # ============================================================
-# 자치구별 일별 거래량
+# 11. 경기도 지도
 # ============================================================
 
-district_daily = (
+def make_gyeonggi_map(
+    summary,
+    geojson,
+    metric_col,
+    metric_name
+):
 
-    analysis
+    map_df = summary.copy()
 
-    .groupby(
+
+    map_df["lawd_cd"] = (
+
+        map_df["lawd_cd"]
+
+        .astype(str)
+
+        .str.zfill(5)
+    )
+
+
+    map_df[metric_col] = (
+        pd.to_numeric(
+            map_df[metric_col],
+            errors="coerce"
+        )
+    )
+
+
+    valid_values = (
+
+        map_df[
+            metric_col
+        ]
+
+        .dropna()
+
+        .abs()
+    )
+
+
+    if len(valid_values) > 0:
+
+        max_abs = max(
+            valid_values.max(),
+            1
+        )
+
+    else:
+
+        max_abs = 1
+
+
+    # --------------------------------------------------------
+    # GeoJSON 전체 feature ID
+    # --------------------------------------------------------
+
+    all_ids = [
+
+        str(
+            feature.get(
+                "id",
+                ""
+            )
+        )
+
+        for feature
+        in geojson.get(
+            "features",
+            []
+        )
+    ]
+
+
+    regulated_ids = set(
+
+        map_df[
+            "lawd_cd"
+        ].tolist()
+    )
+
+
+    unregulated_ids = [
+
+        code
+
+        for code in all_ids
+
+        if code not in regulated_ids
+    ]
+
+
+    fig = go.Figure()
+
+
+    # --------------------------------------------------------
+    # 비규제 지역
+    # --------------------------------------------------------
+
+    if len(
+        unregulated_ids
+    ) > 0:
+
+        fig.add_trace(
+
+            go.Choropleth(
+
+                geojson=geojson,
+
+                locations=(
+                    unregulated_ids
+                ),
+
+                z=[
+                    1
+                ] * len(
+                    unregulated_ids
+                ),
+
+                featureidkey="id",
+
+                colorscale=[
+
+                    [0, "#e5e5e5"],
+                    [1, "#e5e5e5"]
+                ],
+
+                showscale=False,
+
+                marker_line_color=(
+                    "white"
+                ),
+
+                marker_line_width=0.7,
+
+                hoverinfo="skip"
+            )
+        )
+
+
+    # --------------------------------------------------------
+    # 12개 신규 규제지역
+    # --------------------------------------------------------
+
+    custom_data = np.column_stack(
         [
-            "region",
-            "deal_date"
+
+            map_df[
+                "before_count"
+            ],
+
+            map_df[
+                "after_count"
+            ],
+
+            map_df[
+                "before_daily_avg"
+            ],
+
+            map_df[
+                "after_daily_avg"
+            ],
+
+            map_df[
+                metric_col
+            ]
         ]
     )
 
-    .size()
 
-    .reset_index(
-        name="transaction_count"
+    fig.add_trace(
+
+        go.Choropleth(
+
+            geojson=geojson,
+
+            locations=map_df[
+                "lawd_cd"
+            ],
+
+            z=map_df[
+                metric_col
+            ],
+
+            text=map_df[
+                "region"
+            ],
+
+            featureidkey="id",
+
+            zmin=-max_abs,
+
+            zmax=max_abs,
+
+            zmid=0,
+
+            colorscale=(
+                CHANGE_COLORSCALE
+            ),
+
+            marker_line_color=(
+                "white"
+            ),
+
+            marker_line_width=1.4,
+
+            colorbar=dict(
+
+                title=metric_name,
+
+                thickness=13,
+
+                len=0.55
+            ),
+
+            customdata=custom_data,
+
+            hovertemplate=(
+
+                "<b>%{text}</b>"
+                "<br><br>"
+
+                "정책 이전 거래량: "
+                "%{customdata[0]:,.0f}건"
+                "<br>"
+
+                "정책 이후 거래량: "
+                "%{customdata[1]:,.0f}건"
+                "<br>"
+
+                "정책 이전 일평균: "
+                "%{customdata[2]:.2f}건"
+                "<br>"
+
+                "정책 이후 일평균: "
+                "%{customdata[3]:.2f}건"
+                "<br>"
+
+                f"{metric_name}: "
+                "%{customdata[4]:.2f}"
+
+                "<extra></extra>"
+            )
+        )
     )
-)
 
 
-# ------------------------------------------------------------
-# 14일 이동평균
-# ------------------------------------------------------------
+    # --------------------------------------------------------
+    # 규제지역 라벨
+    # --------------------------------------------------------
 
-district_daily = (
-
-    district_daily
-
-    .sort_values(
-        [
-            "region",
-            "deal_date"
-        ]
+    label_df = get_geo_label_data(
+        geojson
     )
-)
 
 
-district_daily["rolling_14d"] = (
+    if not label_df.empty:
 
-    district_daily
+        label_df[
+            "feature_id"
+        ] = (
 
-    .groupby("region")[
-        "transaction_count"
-    ]
+            label_df[
+                "feature_id"
+            ]
 
-    .transform(
+            .astype(str)
 
-        lambda x:
-        x.rolling(
-            14,
-            center=True,
-            min_periods=1
-        ).mean()
+            .str.zfill(5)
+        )
 
+
+        region_lookup = dict(
+
+            zip(
+
+                map_df[
+                    "lawd_cd"
+                ],
+
+                map_df[
+                    "region"
+                ]
+            )
+        )
+
+
+        label_df = label_df[
+
+            label_df[
+                "feature_id"
+            ].isin(
+                regulated_ids
+            )
+
+        ].copy()
+
+
+        label_df[
+            "label_name"
+        ] = (
+
+            label_df[
+                "feature_id"
+            ]
+
+            .map(
+                region_lookup
+            )
+        )
+
+
+        if len(label_df) > 0:
+
+            fig.add_trace(
+
+                go.Scattergeo(
+
+                    lon=label_df[
+                        "label_lon"
+                    ],
+
+                    lat=label_df[
+                        "label_lat"
+                    ],
+
+                    text=label_df[
+                        "label_name"
+                    ],
+
+                    mode="text",
+
+                    textfont=dict(
+                        size=9,
+                        color="#222222"
+                    ),
+
+                    hoverinfo="skip",
+
+                    showlegend=False
+                )
+            )
+
+
+    fig.update_geos(
+
+        fitbounds="locations",
+
+        visible=False,
+
+        projection_type="mercator"
     )
-)
 
 
-district_daily.to_csv(
+    fig.update_layout(
 
-    f"{PROCESSED_PATH}/"
-    "seoul_district_daily.csv",
+        height=650,
 
-    index=False,
+        paper_bgcolor="white",
 
-    encoding="utf-8-sig"
-)
+        margin=dict(
+            l=0,
+            r=0,
+            t=10,
+            b=0
+        )
+    )
 
 
-display(
-    district_daily.head()
-)
+    return fig
 
-"""#서울 21개구 전체 변화도 계산"""
 
 # ============================================================
-# 12. 서울 21개구 전체 정책 전후 비교
+# 12. 정책 기준선 추가 함수
+#
+# add_vline 날짜 오류를 피하기 위해
+# add_shape + add_annotation 사용
 # ============================================================
 
-total_before = (
+def add_policy_line(
+    fig,
+    text="2025.10.15 정책 발표"
+):
 
-    analysis[
-        analysis["period"]
-        == "정책 이전"
-    ]
+    fig.add_shape(
 
-    .shape[0]
-)
+        type="line",
 
+        x0=POLICY_DATE,
+        x1=POLICY_DATE,
 
-total_after = (
+        y0=0,
+        y1=1,
 
-    analysis[
-        analysis["period"]
-        == "정책 이후"
-    ]
-
-    .shape[0]
-)
-
-
-before_daily = (
-
-    total_before
-    / BEFORE_DAYS
-)
-
-
-after_daily = (
-
-    total_after
-    / AFTER_DAYS
-)
-
-
-total_change_pct = (
-
-    (
-        after_daily
-        - before_daily
-    )
-
-    / before_daily
-
-    * 100
-)
-
-
-print(
-    "정책 이전 총 거래량 :",
-    f"{total_before:,}건"
-)
-
-print(
-    "정책 이후 총 거래량 :",
-    f"{total_after:,}건"
-)
-
-
-print(
-    "정책 이전 일평균 :",
-    round(before_daily, 2)
-)
-
-print(
-    "정책 이후 일평균 :",
-    round(after_daily, 2)
-)
-
-
-print(
-    "일평균 거래량 증감률 :",
-    f"{total_change_pct:.2f}%"
-)
-
-"""#시각화 ① 서울 21개구 전체 일별 거래량"""
-
-# ============================================================
-# 13. 서울 21개구 전체 일별 거래량
-# ============================================================
-
-daily = (
-
-    analysis
-
-    .groupby("deal_date")
-
-    .size()
-
-    .reset_index(
-        name="transaction_count"
-    )
-)
-
-
-# ------------------------------------------------------------
-# 거래 없는 날짜도 0으로 포함
-# ------------------------------------------------------------
-
-full_dates = pd.DataFrame({
-
-    "deal_date":
-
-    pd.date_range(
-
-        BEFORE_START,
-
-        AFTER_END,
-
-        freq="D"
-    )
-})
-
-
-daily = full_dates.merge(
-
-    daily,
-
-    on="deal_date",
-
-    how="left"
-)
-
-
-daily["transaction_count"] = (
-
-    daily["transaction_count"]
-
-    .fillna(0)
-)
-
-
-# ------------------------------------------------------------
-# 14일 이동평균
-# ------------------------------------------------------------
-
-daily["rolling_14d"] = (
-
-    daily["transaction_count"]
-
-    .rolling(
-
-        window=14,
-
-        center=True,
-
-        min_periods=1
-    )
-
-    .mean()
-)
-
-# ============================================================
-# 13-2. 서울 21개구 전체 일별 거래량 그래프
-# ============================================================
-
-# 정책 발표일을 datetime으로 명확하게 지정
-policy_date = pd.Timestamp("2025-10-15")
-
-
-fig = go.Figure()
-
-
-# ------------------------------------------------------------
-# 1. 일별 거래량
-# ------------------------------------------------------------
-
-fig.add_trace(
-
-    go.Scatter(
-
-        x=daily["deal_date"],
-
-        y=daily["transaction_count"],
-
-        mode="lines",
-
-        name="일별 거래량",
-
-        opacity=0.25
-    )
-)
-
-
-# ------------------------------------------------------------
-# 2. 14일 이동평균
-# ------------------------------------------------------------
-
-fig.add_trace(
-
-    go.Scatter(
-
-        x=daily["deal_date"],
-
-        y=daily["rolling_14d"],
-
-        mode="lines",
-
-        name="14일 이동평균",
+        xref="x",
+        yref="paper",
 
         line=dict(
-            width=3
+            dash="dash",
+            width=2,
+            color="#333333"
         )
     )
-)
 
 
-# ------------------------------------------------------------
-# 3. 정책 발표일 세로선
-#
-# add_vline + annotation_text 대신
-# add_shape를 사용하면 날짜 오류를 피할 수 있음
-# ------------------------------------------------------------
+    fig.add_annotation(
 
-fig.add_shape(
+        x=POLICY_DATE,
 
-    type="line",
+        y=1,
 
-    x0=policy_date,
-    x1=policy_date,
+        xref="x",
+        yref="paper",
 
-    y0=0,
-    y1=1,
+        text=text,
 
-    xref="x",
-    yref="paper",
+        showarrow=False,
 
-    line=dict(
-        dash="dash",
-        width=2
-    )
-)
+        xanchor="left",
+        yanchor="bottom",
 
-
-# ------------------------------------------------------------
-# 4. 정책 발표일 설명 추가
-# ------------------------------------------------------------
-
-fig.add_annotation(
-
-    x=policy_date,
-
-    y=1,
-
-    xref="x",
-    yref="paper",
-
-    text="2025.10.15<br>주택시장 안정화 대책",
-
-    showarrow=False,
-
-    xanchor="left",
-    yanchor="bottom"
-)
-
-
-# ------------------------------------------------------------
-# 5. 그래프 디자인
-# ------------------------------------------------------------
-
-fig.update_layout(
-
-    template="simple_white",
-
-    title=(
-        "서울 21개 자치구 "
-        "아파트 매매 거래량 변화"
-        "<br>"
-        "<sup>"
-        "강남·서초·송파·용산 제외"
-        "</sup>"
-    ),
-
-    xaxis_title="계약일",
-
-    yaxis_title="거래건수",
-
-    hovermode="x unified",
-
-    height=600
-)
-
-
-fig.show()
-
-"""#시각화 ② 자치구별 Before / After"""
-
-# ============================================================
-# 14. 자치구별 정책 전후 거래건수 비교
-# ============================================================
-
-plot_df = summary[
-
-    [
-        "region",
-        "before_count",
-        "after_count"
-    ]
-
-].copy()
-
-
-plot_df = plot_df.melt(
-
-    id_vars="region",
-
-    value_vars=[
-        "before_count",
-        "after_count"
-    ],
-
-    var_name="period",
-
-    value_name="transaction_count"
-)
-
-
-plot_df["period"] = (
-
-    plot_df["period"]
-
-    .replace({
-
-        "before_count":
-        "정책 이전",
-
-        "after_count":
-        "정책 이후"
-    })
-)
-
-
-fig = px.bar(
-
-    plot_df,
-
-    y="region",
-
-    x="transaction_count",
-
-    color="period",
-
-    barmode="group",
-
-    orientation="h",
-
-    template="simple_white",
-
-    title=(
-        "10·15 대책 전후 "
-        "서울 자치구별 아파트 거래량"
-    ),
-
-    labels={
-
-        "region":
-        "자치구",
-
-        "transaction_count":
-        "6개월 거래건수",
-
-        "period":
-        "기간"
-    }
-)
-
-
-fig.update_layout(
-
-    height=850
-)
-
-
-fig.show()
-
-"""#시각화 ③ 가장 중요한 그래프 — 거래량 증감률"""
-
-# ============================================================
-# 15. 자치구별 일평균 거래량 증감률
-# ============================================================
-
-change_plot = (
-
-    summary
-
-    .sort_values(
-        "daily_avg_change_pct"
-    )
-)
-
-
-fig = px.bar(
-
-    change_plot,
-
-    y="region",
-
-    x="daily_avg_change_pct",
-
-    orientation="h",
-
-    color="daily_avg_change_pct",
-
-    color_continuous_scale="RdBu",
-
-    color_continuous_midpoint=0,
-
-    template="simple_white",
-
-    text_auto=".1f",
-
-    title=(
-        "10·15 대책 이후 "
-        "서울 자치구별 아파트 거래량 증감률"
-        "<br>"
-        "<sup>"
-        "정책 이전·이후 일평균 거래건수 비교"
-        "</sup>"
-    ),
-
-    labels={
-
-        "region":
-        "자치구",
-
-        "daily_avg_change_pct":
-        "거래량 증감률(%)"
-    }
-)
-
-
-fig.add_vline(
-
-    x=0,
-
-    line_dash="dash"
-)
-
-
-fig.update_layout(
-
-    height=850,
-
-    coloraxis_showscale=False
-)
-
-
-fig.show()
-
-"""시각화 ④ Before vs After Scatter"""
-
-# ============================================================
-# 16. 정책 전후 일평균 거래량 Scatter Plot
-# ============================================================
-
-fig = px.scatter(
-
-    summary,
-
-    x="before_daily_avg",
-
-    y="after_daily_avg",
-
-    text="region",
-
-    size="before_count",
-
-    template="simple_white",
-
-    title=(
-        "정책 이전과 이후 "
-        "자치구별 일평균 거래량 비교"
-    ),
-
-    labels={
-
-        "before_daily_avg":
-        "정책 이전 일평균 거래건수",
-
-        "after_daily_avg":
-        "정책 이후 일평균 거래건수"
-    }
-)
-
-
-# ------------------------------------------------------------
-# y = x 기준선
-# ------------------------------------------------------------
-
-max_value = max(
-
-    summary["before_daily_avg"].max(),
-
-    summary["after_daily_avg"].max()
-)
-
-
-fig.add_shape(
-
-    type="line",
-
-    x0=0,
-
-    y0=0,
-
-    x1=max_value,
-
-    y1=max_value,
-
-    line=dict(
-        dash="dash"
-    )
-)
-
-
-fig.update_traces(
-
-    textposition="top center"
-)
-
-
-fig.update_layout(
-    height=700
-)
-
-
-fig.show()
-
-"""#자치구별 월별 데이터 생성"""
-
-# ============================================================
-# 17. 자치구별 월별 거래량
-# ============================================================
-
-monthly = (
-
-    analysis
-
-    .groupby(
-        [
-            "region",
-            "year_month"
-        ]
+        font=dict(
+            size=11
+        )
     )
 
-    .size()
 
-    .reset_index(
-        name="transaction_count"
+    return fig
+
+
+# ============================================================
+# 13. 전체 일별 거래량 그래프
+# ============================================================
+
+def make_daily_chart(
+    daily,
+    title
+):
+
+    fig = go.Figure()
+
+
+    fig.add_trace(
+
+        go.Scatter(
+
+            x=daily[
+                "deal_date"
+            ],
+
+            y=daily[
+                "transaction_count"
+            ],
+
+            mode="lines",
+
+            name="일별 거래량",
+
+            line=dict(
+                width=1
+            ),
+
+            opacity=0.25
+        )
     )
-)
 
 
-display(
-    monthly.head()
-)
+    fig.add_trace(
 
-"""#자치구 선택형 월별 그래프"""
+        go.Scatter(
 
-# ============================================================
-# 18. 자치구별 거래량 그래프 함수
-# ============================================================
+            x=daily[
+                "deal_date"
+            ],
 
-def plot_district(region_name):
+            y=daily[
+                "rolling_14d"
+            ],
+
+            mode="lines",
+
+            name="14일 이동평균",
+
+            line=dict(
+                width=3
+            )
+        )
+    )
 
 
-    temp = monthly[
-
-        monthly["region"]
-        == region_name
-
-    ].copy()
+    fig = add_policy_line(
+        fig,
+        "10·15 대책"
+    )
 
 
-    fig = px.line(
+    fig.update_layout(
 
-        temp,
-
-        x="year_month",
-
-        y="transaction_count",
-
-        markers=True,
+        title=title,
 
         template="simple_white",
 
-        title=(
-            f"{region_name} "
-            "아파트 거래량 변화"
+        xaxis_title="계약일",
+
+        yaxis_title="거래건수",
+
+        hovermode="x unified",
+
+        height=440,
+
+        margin=dict(
+            l=20,
+            r=20,
+            t=60,
+            b=20
+        )
+    )
+
+
+    return fig
+
+
+# ============================================================
+# 14. 지역 상세 일별 데이터
+#
+# 거래 없는 날짜도 0건으로 채운 후
+# 14일 이동평균을 다시 계산
+# ============================================================
+
+def prepare_region_daily(
+    district_daily,
+    selected_region
+):
+
+    temp = district_daily[
+
+        district_daily[
+            "region"
+        ] == selected_region
+
+    ][
+        [
+            "deal_date",
+            "transaction_count"
+        ]
+    ].copy()
+
+
+    full_dates = pd.DataFrame({
+
+        "deal_date":
+            pd.date_range(
+                BEFORE_START,
+                AFTER_END,
+                freq="D"
+            )
+    })
+
+
+    temp = full_dates.merge(
+
+        temp,
+
+        on="deal_date",
+
+        how="left"
+    )
+
+
+    temp[
+        "transaction_count"
+    ] = (
+
+        temp[
+            "transaction_count"
+        ]
+
+        .fillna(0)
+    )
+
+
+    temp[
+        "rolling_14d"
+    ] = (
+
+        temp[
+            "transaction_count"
+        ]
+
+        .rolling(
+            window=14,
+            center=True,
+            min_periods=1
+        )
+
+        .mean()
+    )
+
+
+    return temp
+
+
+# ============================================================
+# 15. 변화량 순위 그래프
+# ============================================================
+
+def make_ranking_chart(
+    summary,
+    metric_col,
+    metric_name
+):
+
+    ranking = (
+
+        summary
+
+        .sort_values(
+            metric_col,
+            ascending=True
+        )
+    )
+
+
+    fig = px.bar(
+
+        ranking,
+
+        x=metric_col,
+
+        y="region",
+
+        orientation="h",
+
+        color=metric_col,
+
+        color_continuous_scale=(
+            CHANGE_COLORSCALE
         ),
+
+        color_continuous_midpoint=0,
+
+        text_auto=".1f",
 
         labels={
 
-            "year_month":
-            "계약연월",
+            metric_col:
+                metric_name,
 
-            "transaction_count":
-            "거래건수"
+            "region":
+                ""
         }
     )
 
 
     fig.add_vline(
 
-        x="2025-10-15",
+        x=0,
 
         line_dash="dash",
 
-        annotation_text="10·15 대책"
+        line_width=1
     )
 
 
     fig.update_layout(
 
-        hovermode="x unified",
+        template="simple_white",
 
-        height=500
+        height=650,
+
+        coloraxis_showscale=False,
+
+        margin=dict(
+            l=0,
+            r=10,
+            t=10,
+            b=10
+        )
     )
 
 
-    fig.show()
+    return fig
 
-"""#거래량 변화 순위 확인"""
 
 # ============================================================
-# 19. 거래량 변화 순위
+# 16. 권역 선택
 # ============================================================
 
-ranking = (
+with st.sidebar:
+
+    st.title(
+        "Dashboard"
+    )
+
+
+    scope = st.radio(
+
+        "분석 권역",
+
+        options=[
+            "서울",
+            "경기"
+        ],
+
+        horizontal=True
+    )
+
+
+    st.divider()
+
+
+# ============================================================
+# 17. 권역별 데이터 연결
+# ============================================================
+
+if scope == "서울":
+
+    summary = (
+        seoul_summary.copy()
+    )
+
+    daily = (
+        seoul_daily.copy()
+    )
+
+    district_daily = (
+        seoul_district_daily.copy()
+    )
+
+    monthly = (
+        seoul_monthly.copy()
+    )
+
+    geojson = (
+        seoul_geojson
+    )
+
+    scope_title = (
+        "서울 신규 규제대상 21개 자치구"
+    )
+
+    map_note = (
+        "강남·서초·송파·용산은 "
+        "기존 규제지역으로 별도 표시"
+    )
+
+
+else:
+
+    summary = (
+        gyeonggi_summary.copy()
+    )
+
+    daily = (
+        gyeonggi_daily.copy()
+    )
+
+    district_daily = (
+        gyeonggi_district_daily.copy()
+    )
+
+    monthly = (
+        gyeonggi_monthly.copy()
+    )
+
+    geojson = (
+        gyeonggi_geojson
+    )
+
+    scope_title = (
+        "경기도 신규 규제지역 12개"
+    )
+
+    map_note = (
+        "회색은 비규제·비분석지역"
+    )
+
+
+# ============================================================
+# 18. Sidebar 지역 선택
+# ============================================================
+
+with st.sidebar:
+
+    selected_region = st.selectbox(
+
+        "지역 상세보기",
+
+        options=sorted(
+            summary[
+                "region"
+            ].dropna().tolist()
+        )
+    )
+
+
+    # 경기도인 경우 도시정보도 표시
+    if (
+        scope == "경기"
+        and
+        "parent_city"
+        in summary.columns
+    ):
+
+        selected_city = (
+
+            summary.loc[
+                summary[
+                    "region"
+                ]
+                ==
+                selected_region,
+                "parent_city"
+            ]
+
+            .iloc[0]
+        )
+
+
+        st.caption(
+            f"상위 도시 : {selected_city}"
+        )
+
+
+    st.divider()
+
+
+    st.caption(
+        "분석기간"
+    )
+
+    st.write(
+        "**정책 이전**"
+    )
+
+    st.write(
+        "2025.04.15 ~ 2025.10.14"
+    )
+
+    st.write(
+        "**정책 이후**"
+    )
+
+    st.write(
+        "2025.10.15 ~ 2026.04.14"
+    )
+
+
+# ============================================================
+# 19. Header
+# ============================================================
+
+st.title(
+    "10·15 부동산 규제정책 이후 거래시장 변화"
+)
+
+st.caption(
+    "2025년 10월 15일 정책 발표 전후 "
+    "6개월간 아파트 매매 실거래량 비교"
+)
+
+
+st.markdown(
+    f"### {scope_title}"
+)
+
+
+# ============================================================
+# 20. 전체 KPI 계산
+# ============================================================
+
+total_before = (
+    summary[
+        "before_count"
+    ].sum()
+)
+
+total_after = (
+    summary[
+        "after_count"
+    ].sum()
+)
+
+
+before_daily = (
+    total_before
+    / BEFORE_DAYS
+)
+
+after_daily = (
+    total_after
+    / AFTER_DAYS
+)
+
+
+overall_change_pct = (
+
+    (
+        after_daily
+        -
+        before_daily
+    )
+
+    /
+    before_daily
+
+    * 100
+)
+
+
+largest_drop = (
 
     summary
 
@@ -2583,2271 +1776,789 @@ ranking = (
         "daily_avg_change_pct"
     )
 
-    .reset_index(
-        drop=True
-    )
+    .iloc[0]
 )
 
 
-ranking["rank"] = (
-    ranking.index + 1
-)
-
-
-display(
-
-    ranking[
-        [
-            "rank",
-            "region",
-            "before_count",
-            "after_count",
-            "before_daily_avg",
-            "after_daily_avg",
-            "daily_avg_change_pct"
-        ]
-    ]
-
-    .round(2)
-)
-
-"""#분석에 아주 유용한 추가 지표: 서울 내 거래 점유율"""
-
-# ============================================================
-# 20. 서울 21개구 내 거래 점유율 변화
-# ============================================================
-
-total_before = summary[
-    "before_count"
-].sum()
-
-total_after = summary[
-    "after_count"
-].sum()
-
-
-summary["before_share_pct"] = (
-
-    summary["before_count"]
-
-    / total_before
-
-    * 100
-)
-
-
-summary["after_share_pct"] = (
-
-    summary["after_count"]
-
-    / total_after
-
-    * 100
-)
-
-
-summary["share_change_pp"] = (
-
-    summary["after_share_pct"]
-
-    - summary["before_share_pct"]
-)
-
-
-display(
-
-    summary[
-
-        [
-            "region",
-            "before_share_pct",
-            "after_share_pct",
-            "share_change_pp"
-        ]
-
-    ]
-
-    .sort_values(
-        "share_change_pp"
-    )
-
-    .round(2)
-)
-
-"""#거래점유율 변화 시각화"""
-
-# ============================================================
-# 21. 자치구별 거래 점유율 변화
-# ============================================================
-
-share_plot = (
+largest_increase = (
 
     summary
 
     .sort_values(
-        "share_change_pp"
-    )
-)
-
-
-fig = px.bar(
-
-    share_plot,
-
-    y="region",
-
-    x="share_change_pp",
-
-    orientation="h",
-
-    color="share_change_pp",
-
-    color_continuous_scale="RdBu",
-
-    color_continuous_midpoint=0,
-
-    template="simple_white",
-
-    text_auto=".2f",
-
-    title=(
-        "10·15 대책 전후 "
-        "서울 자치구별 거래 점유율 변화"
-    ),
-
-    labels={
-
-        "region":
-        "자치구",
-
-        "share_change_pp":
-        "거래 점유율 변화(%p)"
-    }
-)
-
-
-fig.add_vline(
-
-    x=0,
-
-    line_dash="dash"
-)
-
-
-fig.update_layout(
-
-    height=850,
-
-    coloraxis_showscale=False
-)
-
-
-fig.show()
-
-"""#최종 데이터 저장"""
-
-# ============================================================
-# 22. Streamlit용 데이터 저장
-# ============================================================
-
-# 전체 전처리 거래
-analysis.to_csv(
-
-    f"{PROCESSED_PATH}/"
-    "seoul_transactions_1015.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-# 정책 전후 자치구 요약
-summary.to_csv(
-
-    f"{PROCESSED_PATH}/"
-    "seoul_policy_summary.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-# 일별 거래
-daily.to_csv(
-
-    f"{PROCESSED_PATH}/"
-    "seoul_daily_transactions.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-# 월별 거래
-monthly.to_csv(
-
-    f"{PROCESSED_PATH}/"
-    "seoul_monthly_transactions.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-print("저장 완료")
-
-print(PROCESSED_PATH)
-
-"""#경기도 지역 분석"""
-
-# ============================================================
-# 23. 경기도 규제지역 분석 설정
-# ============================================================
-
-# 경기도 데이터는 서울 데이터와 분리해서 저장
-GYEONGGI_RAW_PATH = f"{RAW_PATH}/gyeonggi"
-GYEONGGI_PROCESSED_PATH = f"{PROCESSED_PATH}/gyeonggi"
-GYEONGGI_GEO_PATH = f"{GEO_PATH}/gyeonggi"
-
-os.makedirs(GYEONGGI_RAW_PATH, exist_ok=True)
-os.makedirs(GYEONGGI_PROCESSED_PATH, exist_ok=True)
-os.makedirs(GYEONGGI_GEO_PATH, exist_ok=True)
-
-
-# ============================================================
-# 2025.10.15 신규 규제지역 12개
-# ============================================================
-
-GYEONGGI_REGULATED = {
-
-    # 수원시
-    "수원시 장안구": "41111",
-    "수원시 팔달구": "41115",
-    "수원시 영통구": "41117",
-
-    # 성남시
-    "성남시 수정구": "41131",
-    "성남시 중원구": "41133",
-    "성남시 분당구": "41135",
-
-    # 광명 / 과천
-    "광명시": "41210",
-    "과천시": "41290",
-
-    # 안양
-    "안양시 동안구": "41173",
-
-    # 용인
-    "용인시 수지구": "41465",
-
-    # 의왕 / 하남
-    "의왕시": "41430",
-    "하남시": "41450"
-}
-
-
-print(
-    "경기도 신규 규제지역 수 :",
-    len(GYEONGGI_REGULATED)
-)
-
-print("\n분석 대상")
-
-for region, code in GYEONGGI_REGULATED.items():
-
-    print(
-        region,
-        "/",
-        code
+        "daily_avg_change_pct",
+        ascending=False
     )
 
-"""#API가 경기도에서도 정상적으로 작동하는지 테스트"""
-
-# ============================================================
-# 24. 경기도 API 테스트
-# 수원시 영통구 2025년 9월
-# ============================================================
-
-gg_test_df = fetch_apt_trade(
-
-    lawd_cd="41117",
-
-    deal_ymd="202509"
+    .iloc[0]
 )
 
 
-print(
-    "수원시 영통구 "
-    "2025년 9월 거래건수 :",
-    len(gg_test_df)
+# ============================================================
+# 21. KPI 카드
+# ============================================================
+
+kpi1, kpi2, kpi3, kpi4 = (
+    st.columns(4)
 )
 
 
-if len(gg_test_df) > 0:
+with kpi1:
 
-    print("✅ 경기도 API 정상")
+    st.metric(
 
-    display(
-        gg_test_df.head()
+        "정책 이전 거래량",
+
+        f"{total_before:,.0f}건",
+
+        help=(
+            "2025.04.15~2025.10.14 "
+            "전체 거래건수"
+        )
     )
 
-else:
 
-    print(
-        "❌ 데이터를 가져오지 못했습니다."
+with kpi2:
+
+    st.metric(
+
+        "정책 이후 거래량",
+
+        f"{total_after:,.0f}건",
+
+        delta=(
+            f"{overall_change_pct:.1f}% "
+            "일평균"
+        ),
+
+        help=(
+            "2025.10.15~2026.04.14 "
+            "전체 거래건수"
+        )
     )
 
-"""#경기도 12개 규제지역 거래자료 수집"""
+
+with kpi3:
+
+    st.metric(
+
+        "거래량 최대 감소",
+
+        largest_drop[
+            "region"
+        ],
+
+        delta=(
+            f"{largest_drop['daily_avg_change_pct']:.1f}%"
+        )
+    )
+
+
+with kpi4:
+
+    st.metric(
+
+        "상대적 최대 증가",
+
+        largest_increase[
+            "region"
+        ],
+
+        delta=(
+            f"{largest_increase['daily_avg_change_pct']:.1f}%"
+        )
+    )
+
+
+st.divider()
+
 
 # ============================================================
-# 25. 경기도 12개 규제지역 실거래 데이터 수집
+# 22. Tab 구성
 # ============================================================
 
-from pandas.errors import EmptyDataError
+overview_tab, detail_tab, data_tab = st.tabs(
+
+    [
+        "Overview",
+        "지역 상세",
+        "Data"
+    ]
+)
 
 
-gyeonggi_all_region_data = []
+# ============================================================
+# 23. OVERVIEW
+# ============================================================
 
-
-for region_name, lawd_cd in GYEONGGI_REGULATED.items():
-
-    print("\n" + "=" * 65)
-
-    print(
-        f"[경기도 지역 처리] {region_name}"
-    )
-
-    print("=" * 65)
+with overview_tab:
 
 
     # --------------------------------------------------------
-    # 저장 파일
+    # 지도 지표 선택
     # --------------------------------------------------------
 
-    save_file = (
+    metric_choice = st.radio(
 
-        f"{GYEONGGI_RAW_PATH}/"
-        f"{lawd_cd}_{region_name}_"
-        f"202504_202604.csv"
+        "지도·순위 지표",
+
+        options=[
+
+            "일평균 거래량 증감률",
+
+            "분석대상 내 거래점유율 변화"
+        ],
+
+        horizontal=True
     )
 
 
-    use_cache = False
+    if metric_choice == (
+        "일평균 거래량 증감률"
+    ):
+
+        metric_col = (
+            "daily_avg_change_pct"
+        )
+
+        metric_name = (
+            "증감률(%)"
+        )
 
 
-    # ========================================================
-    # 기존 파일 확인
-    # ========================================================
+    else:
 
-    if os.path.exists(save_file):
+        metric_col = (
+            "share_change_pp"
+        )
 
-        try:
-
-            # 너무 작은 파일이면 비정상 캐시
-            if os.path.getsize(save_file) <= 10:
-
-                print(
-                    "빈 캐시파일 발견 → 삭제"
-                )
-
-                os.remove(save_file)
+        metric_name = (
+            "점유율 변화(%p)"
+        )
 
 
-            else:
+    # --------------------------------------------------------
+    # 지도 + 순위
+    # --------------------------------------------------------
 
-                region_df = pd.read_csv(
-
-                    save_file,
-
-                    dtype=str
-                )
-
-
-                if (
-                    len(region_df) > 0
-                    and
-                    len(region_df.columns) > 0
-                ):
-
-                    use_cache = True
-
-                    print(
-                        f"[기존파일 사용] "
-                        f"{region_name}"
-                    )
-
-                    print(
-                        f"{len(region_df):,}건"
-                    )
+    map_col, rank_col = st.columns(
+        [1.45, 1]
+    )
 
 
-                else:
+    with map_col:
 
-                    os.remove(save_file)
-
-
-        except EmptyDataError:
-
-            print(
-                "빈 CSV 파일 발견 → 삭제"
-            )
-
-            os.remove(save_file)
+        st.subheader(
+            "공간별 거래시장 변화"
+        )
 
 
-        except Exception as error:
-
-            print(
-                "기존파일 읽기 오류"
-            )
-
-            print(error)
-
-            os.remove(save_file)
+        st.caption(
+            map_note
+        )
 
 
-    # ========================================================
-    # 기존파일이 없으면 API 수집
-    # ========================================================
+        if scope == "서울":
 
-    if not use_cache:
+            map_fig = make_seoul_map(
 
-        monthly_data = []
+                summary,
 
+                geojson,
 
-        for ym in API_MONTHS:
+                metric_col,
 
-            temp = fetch_apt_trade(
-
-                lawd_cd=lawd_cd,
-
-                deal_ymd=ym
-            )
-
-
-            if len(temp) > 0:
-
-                temp["region"] = (
-                    region_name
-                )
-
-                temp["lawd_cd"] = (
-                    lawd_cd
-                )
-
-
-                monthly_data.append(
-                    temp
-                )
-
-
-                print(
-                    f"{region_name} / {ym}"
-                    f" → {len(temp):,}건"
-                )
-
-
-            else:
-
-                print(
-                    f"{region_name} / {ym}"
-                    " → 데이터 없음"
-                )
-
-
-        # ----------------------------------------------------
-        # 월별 자료 합치기
-        # ----------------------------------------------------
-
-        if len(monthly_data) > 0:
-
-            region_df = pd.concat(
-
-                monthly_data,
-
-                ignore_index=True
-            )
-
-
-            # 데이터가 있을 때만 CSV 저장
-            region_df.to_csv(
-
-                save_file,
-
-                index=False,
-
-                encoding="utf-8-sig"
-            )
-
-
-            print(
-                f"[저장 완료] "
-                f"{region_name}"
+                metric_name
             )
 
 
         else:
 
-            print(
-                f"[수집 실패] "
-                f"{region_name}"
+            map_fig = make_gyeonggi_map(
+
+                summary,
+
+                geojson,
+
+                metric_col,
+
+                metric_name
             )
 
-            continue
 
+        st.plotly_chart(
 
-    # ========================================================
-    # 지역정보 보장
-    # ========================================================
+            map_fig,
 
-    region_df["region"] = (
-        region_name
-    )
+            use_container_width=True,
 
-    region_df["lawd_cd"] = (
-        lawd_cd
-    )
-
-
-    gyeonggi_all_region_data.append(
-        region_df
-    )
-
-
-# ============================================================
-# 12개 규제지역 데이터 통합
-# ============================================================
-
-if len(gyeonggi_all_region_data) == 0:
-
-    raise ValueError(
-        "경기도 데이터가 수집되지 않았습니다."
-    )
-
-
-gyeonggi_transactions_raw = pd.concat(
-
-    gyeonggi_all_region_data,
-
-    ignore_index=True
-)
-
-
-print("\n" + "=" * 65)
-
-print("경기도 실거래 데이터 수집 완료")
-
-print("=" * 65)
-
-print(
-    "전체 거래건수 :",
-    f"{len(gyeonggi_transactions_raw):,}건"
-)
-
-
-display(
-
-    gyeonggi_transactions_raw[
-        "region"
-    ]
-
-    .value_counts()
-
-    .sort_index()
-)
-
-"""#경기도 실거래 데이터 전처리"""
-
-# ============================================================
-# 26. 경기도 실거래 데이터 전처리
-# ============================================================
-
-gyeonggi_transactions = refine_transactions(
-
-    gyeonggi_transactions_raw
-)
-
-
-print(
-    "전처리 후 거래건수 :",
-    f"{len(gyeonggi_transactions):,}건"
-)
-
-
-display(
-
-    gyeonggi_transactions[
-
-        [
-            "deal_date",
-            "region",
-            "dong_name",
-            "apartment_name",
-            "price_eok",
-            "area_m2"
-        ]
-
-    ].head()
-)
-
-"""#정책 전후 정확히 6개월만 추출"""
-
-# ============================================================
-# 27. 정책 전후 정확한 6개월 추출
-# ============================================================
-
-gyeonggi_analysis = (
-
-    gyeonggi_transactions[
-
-        gyeonggi_transactions[
-            "deal_date"
-        ].between(
-
-            BEFORE_START,
-
-            AFTER_END
+            config={
+                "displayModeBar": False
+            }
         )
 
-    ].copy()
-)
+
+    with rank_col:
+
+        st.subheader(
+            "지역별 변화 순위"
+        )
 
 
-# ------------------------------------------------------------
-# 정책 이전 / 이후 구분
-# ------------------------------------------------------------
+        rank_fig = make_ranking_chart(
 
-gyeonggi_analysis["period"] = np.where(
+            summary,
 
-    gyeonggi_analysis[
-        "deal_date"
-    ] < POLICY_DATE,
+            metric_col,
 
-    "정책 이전",
-
-    "정책 이후"
-)
+            metric_name
+        )
 
 
-# ------------------------------------------------------------
-# 정책 발표일 상대 날짜
-# ------------------------------------------------------------
+        st.plotly_chart(
 
-gyeonggi_analysis["relative_day"] = (
+            rank_fig,
 
-    gyeonggi_analysis["deal_date"]
+            use_container_width=True,
 
-    - POLICY_DATE
-
-).dt.days
-
-
-# ------------------------------------------------------------
-# 월 컬럼
-# ------------------------------------------------------------
-
-gyeonggi_analysis["year_month"] = (
-
-    gyeonggi_analysis[
-        "deal_date"
-    ]
-
-    .dt.to_period("M")
-
-    .dt.to_timestamp()
-)
+            config={
+                "displayModeBar": False
+            }
+        )
 
 
-print(
-    "경기도 분석 거래건수 :",
-    f"{len(gyeonggi_analysis):,}건"
-)
+    st.divider()
 
 
-display(
+    # --------------------------------------------------------
+    # 전체 일별 시계열
+    # --------------------------------------------------------
 
-    gyeonggi_analysis[
-        "period"
-    ].value_counts()
-)
-
-"""#경기도 데이터 검증"""
-
-# ============================================================
-# 28. 경기도 분석 데이터 검증
-# ============================================================
-
-print(
-    "분석지역 수 :",
-    gyeonggi_analysis[
-        "region"
-    ].nunique()
-)
-
-
-print(
-    "\n분석 시작일 :",
-    gyeonggi_analysis[
-        "deal_date"
-    ].min()
-)
-
-
-print(
-    "분석 종료일 :",
-    gyeonggi_analysis[
-        "deal_date"
-    ].max()
-)
-
-
-print(
-    "\n지역별 거래건수"
-)
-
-
-display(
-
-    gyeonggi_analysis[
-        "region"
-    ]
-
-    .value_counts()
-
-    .sort_index()
-)
-
-"""#규제지역별 정책 전후 거래량 집계"""
-
-# ============================================================
-# 29. 경기도 규제지역별 정책 전후 거래량
-# ============================================================
-
-gyeonggi_district_period = (
-
-    gyeonggi_analysis
-
-    .groupby(
-        [
-            "region",
-            "period"
-        ]
+    st.subheader(
+        "전체 아파트 매매 거래량 추이"
     )
 
-    .size()
 
-    .reset_index(
-        name="transaction_count"
-    )
-)
+    daily_fig = make_daily_chart(
 
+        daily,
 
-display(
-    gyeonggi_district_period
-)
-
-"""#경기도 Before / After 요약표"""
-
-# ============================================================
-# 30. 경기도 정책 전후 비교 테이블
-# ============================================================
-
-gyeonggi_summary = (
-
-    gyeonggi_district_period
-
-    .pivot(
-
-        index="region",
-
-        columns="period",
-
-        values="transaction_count"
+        (
+            f"{scope_title} "
+            "일별 거래량 변화"
+        )
     )
 
-    .fillna(0)
 
-    .reset_index()
-)
+    st.plotly_chart(
 
+        daily_fig,
 
-gyeonggi_summary.columns.name = None
+        use_container_width=True,
 
-
-# ------------------------------------------------------------
-# 컬럼 이름 변경
-# ------------------------------------------------------------
-
-gyeonggi_summary = (
-    gyeonggi_summary.rename(
-
-        columns={
-
-            "정책 이전":
-            "before_count",
-
-            "정책 이후":
-            "after_count"
+        config={
+            "displayModeBar": False
         }
     )
-)
 
 
-# ------------------------------------------------------------
-# 법정동 코드 추가
-# ------------------------------------------------------------
-
-region_code_df = pd.DataFrame(
-
-    list(
-        GYEONGGI_REGULATED.items()
-    ),
-
-    columns=[
-        "region",
-        "lawd_cd"
-    ]
-)
-
-
-gyeonggi_summary = (
-    gyeonggi_summary.merge(
-
-        region_code_df,
-
-        on="region",
-
-        how="left"
+    st.caption(
+        "얇은 선은 일별 거래량, "
+        "굵은 선은 14일 이동평균입니다."
     )
-)
 
 
-# ------------------------------------------------------------
-# 절대 거래량 변화
-# ------------------------------------------------------------
+# ============================================================
+# 24. 지역 상세
+# ============================================================
 
-gyeonggi_summary[
-    "count_change"
-] = (
-
-    gyeonggi_summary[
-        "after_count"
-    ]
-
-    - gyeonggi_summary[
-        "before_count"
-    ]
-)
+with detail_tab:
 
 
-# ------------------------------------------------------------
-# 총 거래량 증감률
-# ------------------------------------------------------------
-
-gyeonggi_summary[
-    "count_change_pct"
-] = (
-
-    gyeonggi_summary[
-        "count_change"
-    ]
-
-    / gyeonggi_summary[
-        "before_count"
-    ]
-
-    * 100
-)
+    st.subheader(
+        selected_region
+    )
 
 
-# ------------------------------------------------------------
-# 정책 전 일평균
-# ------------------------------------------------------------
+    selected_summary = (
 
-gyeonggi_summary[
-    "before_daily_avg"
-] = (
+        summary[
 
-    gyeonggi_summary[
-        "before_count"
-    ]
+            summary[
+                "region"
+            ]
+            ==
+            selected_region
 
-    / BEFORE_DAYS
-)
-
-
-# ------------------------------------------------------------
-# 정책 후 일평균
-# ------------------------------------------------------------
-
-gyeonggi_summary[
-    "after_daily_avg"
-] = (
-
-    gyeonggi_summary[
-        "after_count"
-    ]
-
-    / AFTER_DAYS
-)
-
-
-# ------------------------------------------------------------
-# 일평균 거래량 증감률
-# ------------------------------------------------------------
-
-gyeonggi_summary[
-    "daily_avg_change_pct"
-] = (
-
-    (
-        gyeonggi_summary[
-            "after_daily_avg"
         ]
 
-        - gyeonggi_summary[
-            "before_daily_avg"
-        ]
+        .iloc[0]
     )
 
-    / gyeonggi_summary[
-        "before_daily_avg"
-    ]
 
-    * 100
-)
-
-
-gyeonggi_summary = (
-
-    gyeonggi_summary
-
-    .sort_values(
-        "daily_avg_change_pct"
+    d1, d2, d3, d4 = (
+        st.columns(4)
     )
 
-    .reset_index(
-        drop=True
-    )
-)
 
+    with d1:
 
-display(
+        st.metric(
 
-    gyeonggi_summary.round(2)
-)
+            "정책 이전 거래량",
 
-"""#지역별 거래량 증감률 순위"""
+            (
+                f"{selected_summary['before_count']:,.0f}건"
+            )
+        )
 
-# ============================================================
-# 31. 경기도 규제지역 거래량 증감률
-# ============================================================
 
-gyeonggi_change_plot = (
+    with d2:
 
-    gyeonggi_summary
+        st.metric(
 
-    .sort_values(
-        "daily_avg_change_pct"
-    )
-)
+            "정책 이후 거래량",
 
+            (
+                f"{selected_summary['after_count']:,.0f}건"
+            )
+        )
 
-fig = px.bar(
 
-    gyeonggi_change_plot,
+    with d3:
 
-    y="region",
+        st.metric(
 
-    x="daily_avg_change_pct",
+            "일평균 거래량 변화",
 
-    orientation="h",
+            (
+                f"{selected_summary['daily_avg_change_pct']:.1f}%"
+            )
+        )
 
-    color="daily_avg_change_pct",
 
-    color_continuous_scale="RdBu",
+    with d4:
 
-    color_continuous_midpoint=0,
+        st.metric(
 
-    template="simple_white",
+            "거래 점유율 변화",
 
-    text_auto=".1f",
+            (
+                f"{selected_summary['share_change_pp']:.2f}%p"
+            )
+        )
 
-    title=(
 
-        "10·15 대책 전후 "
-        "경기도 신규 규제지역 "
-        "아파트 거래량 증감률"
+    st.divider()
 
-        "<br>"
 
-        "<sup>"
-        "2025.04.15~10.14 "
-        "vs "
-        "2025.10.15~2026.04.14"
-        "</sup>"
-    ),
+    # --------------------------------------------------------
+    # 지역별 일별 시계열
+    # --------------------------------------------------------
 
-    labels={
+    selected_daily = (
+        prepare_region_daily(
 
-        "region":
-        "지역",
+            district_daily,
 
-        "daily_avg_change_pct":
-        "일평균 거래량 증감률(%)"
-    }
-)
-
-
-fig.add_vline(
-
-    x=0,
-
-    line_dash="dash"
-)
-
-
-fig.update_layout(
-
-    height=650,
-
-    coloraxis_showscale=False
-)
-
-
-fig.show()
-
-"""#정책 이전 / 이후 거래건수 직접 비교"""
-
-# ============================================================
-# 32. 경기도 정책 전후 거래건수 비교
-# ============================================================
-
-gyeonggi_plot_df = (
-
-    gyeonggi_summary[
-
-        [
-            "region",
-            "before_count",
-            "after_count"
-        ]
-
-    ].copy()
-)
-
-
-gyeonggi_plot_df = (
-
-    gyeonggi_plot_df.melt(
-
-        id_vars="region",
-
-        value_vars=[
-            "before_count",
-            "after_count"
-        ],
-
-        var_name="period",
-
-        value_name="transaction_count"
-    )
-)
-
-
-gyeonggi_plot_df[
-    "period"
-] = (
-
-    gyeonggi_plot_df[
-        "period"
-    ]
-
-    .replace({
-
-        "before_count":
-        "정책 이전",
-
-        "after_count":
-        "정책 이후"
-    })
-)
-
-
-fig = px.bar(
-
-    gyeonggi_plot_df,
-
-    y="region",
-
-    x="transaction_count",
-
-    color="period",
-
-    barmode="group",
-
-    orientation="h",
-
-    template="simple_white",
-
-    title=(
-        "10·15 대책 전후 "
-        "경기도 신규 규제지역 "
-        "아파트 거래량"
-    ),
-
-    labels={
-
-        "region":
-        "지역",
-
-        "transaction_count":
-        "6개월 거래건수",
-
-        "period":
-        "기간"
-    }
-)
-
-
-fig.update_layout(
-    height=650
-)
-
-
-fig.show()
-
-"""#경기도 규제지역 전체 일별 거래량"""
-
-# ============================================================
-# 33. 경기도 규제지역 전체 일별 거래량
-# ============================================================
-
-gyeonggi_daily = (
-
-    gyeonggi_analysis
-
-    .groupby(
-        "deal_date"
-    )
-
-    .size()
-
-    .reset_index(
-        name="transaction_count"
-    )
-)
-
-
-# ------------------------------------------------------------
-# 거래가 없는 날짜도 포함
-# ------------------------------------------------------------
-
-gg_full_dates = pd.DataFrame({
-
-    "deal_date":
-
-    pd.date_range(
-
-        BEFORE_START,
-
-        AFTER_END,
-
-        freq="D"
-    )
-})
-
-
-gyeonggi_daily = (
-
-    gg_full_dates.merge(
-
-        gyeonggi_daily,
-
-        on="deal_date",
-
-        how="left"
-    )
-)
-
-
-gyeonggi_daily[
-    "transaction_count"
-] = (
-
-    gyeonggi_daily[
-        "transaction_count"
-    ]
-
-    .fillna(0)
-)
-
-
-# ------------------------------------------------------------
-# 14일 이동평균
-# ------------------------------------------------------------
-
-gyeonggi_daily[
-    "rolling_14d"
-] = (
-
-    gyeonggi_daily[
-        "transaction_count"
-    ]
-
-    .rolling(
-
-        window=14,
-
-        center=True,
-
-        min_periods=1
-    )
-
-    .mean()
-)
-
-# ============================================================
-# 33-2. 경기도 일별 거래량 그래프
-# ============================================================
-
-fig = go.Figure()
-
-
-# 일별 거래량
-fig.add_trace(
-
-    go.Scatter(
-
-        x=gyeonggi_daily[
-            "deal_date"
-        ],
-
-        y=gyeonggi_daily[
-            "transaction_count"
-        ],
-
-        mode="lines",
-
-        name="일별 거래량",
-
-        opacity=0.25
-    )
-)
-
-
-# 14일 이동평균
-fig.add_trace(
-
-    go.Scatter(
-
-        x=gyeonggi_daily[
-            "deal_date"
-        ],
-
-        y=gyeonggi_daily[
-            "rolling_14d"
-        ],
-
-        mode="lines",
-
-        name="14일 이동평균",
-
-        line=dict(
-            width=3
+            selected_region
         )
     )
-)
 
 
-# ------------------------------------------------------------
-# 10.15 정책선
-# add_vline 날짜 오류 방지를 위해 add_shape 사용
-# ------------------------------------------------------------
+    detail_fig = make_daily_chart(
 
-fig.add_shape(
+        selected_daily,
 
-    type="line",
-
-    x0=POLICY_DATE,
-    x1=POLICY_DATE,
-
-    y0=0,
-    y1=1,
-
-    xref="x",
-    yref="paper",
-
-    line=dict(
-
-        dash="dash",
-
-        width=2
+        (
+            f"{selected_region} "
+            "일별 아파트 거래량 변화"
+        )
     )
-)
 
 
-fig.add_annotation(
+    st.plotly_chart(
 
-    x=POLICY_DATE,
+        detail_fig,
 
-    y=1,
+        use_container_width=True,
 
-    xref="x",
-    yref="paper",
-
-    text=(
-        "2025.10.15<br>"
-        "주택시장 안정화 대책"
-    ),
-
-    showarrow=False,
-
-    xanchor="left",
-
-    yanchor="bottom"
-)
+        config={
+            "displayModeBar": False
+        }
+    )
 
 
-fig.update_layout(
+    # --------------------------------------------------------
+    # 월별 추이 + Before/After
+    # --------------------------------------------------------
 
-    template="simple_white",
-
-    title=(
-
-        "경기도 신규 규제지역 "
-        "아파트 매매 거래량 변화"
-
-        "<br>"
-
-        "<sup>"
-        "2025.10.15 신규 지정 12개 지역"
-        "</sup>"
-    ),
-
-    xaxis_title="계약일",
-
-    yaxis_title="거래건수",
-
-    hovermode="x unified",
-
-    height=600
-)
+    left_chart, right_chart = (
+        st.columns(
+            [1.5, 1]
+        )
+    )
 
 
-fig.show()
+    with left_chart:
 
-"""#경기도 지역별 월별 거래량"""
+        st.subheader(
+            "월별 거래량"
+        )
+
+
+        selected_monthly = (
+
+            monthly[
+
+                monthly[
+                    "region"
+                ]
+                ==
+                selected_region
+
+            ]
+
+            .copy()
+        )
+
+
+        monthly_fig = px.line(
+
+            selected_monthly,
+
+            x="year_month",
+
+            y="transaction_count",
+
+            markers=True,
+
+            labels={
+
+                "year_month":
+                    "계약연월",
+
+                "transaction_count":
+                    "거래건수"
+            }
+        )
+
+
+        monthly_fig = add_policy_line(
+
+            monthly_fig,
+
+            "10·15 대책"
+        )
+
+
+        monthly_fig.update_layout(
+
+            template="simple_white",
+
+            height=420,
+
+            margin=dict(
+                l=10,
+                r=10,
+                t=30,
+                b=10
+            )
+        )
+
+
+        st.plotly_chart(
+
+            monthly_fig,
+
+            use_container_width=True,
+
+            config={
+                "displayModeBar": False
+            }
+        )
+
+
+        st.caption(
+            "2025년 4월과 2026년 4월은 "
+            "분석기간 경계 때문에 부분월입니다."
+        )
+
+
+    with right_chart:
+
+        st.subheader(
+            "정책 전후 6개월 비교"
+        )
+
+
+        compare_df = pd.DataFrame({
+
+            "기간": [
+                "정책 이전",
+                "정책 이후"
+            ],
+
+            "거래건수": [
+
+                selected_summary[
+                    "before_count"
+                ],
+
+                selected_summary[
+                    "after_count"
+                ]
+            ]
+        })
+
+
+        compare_fig = px.bar(
+
+            compare_df,
+
+            x="기간",
+
+            y="거래건수",
+
+            text_auto=",",
+
+            labels={
+                "거래건수":
+                    "거래건수"
+            }
+        )
+
+
+        compare_fig.update_layout(
+
+            template="simple_white",
+
+            showlegend=False,
+
+            height=420,
+
+            margin=dict(
+                l=10,
+                r=10,
+                t=30,
+                b=10
+            )
+        )
+
+
+        st.plotly_chart(
+
+            compare_fig,
+
+            use_container_width=True,
+
+            config={
+                "displayModeBar": False
+            }
+        )
+
 
 # ============================================================
-# 34. 경기도 지역별 월별 거래량
+# 25. DATA
 # ============================================================
 
-gyeonggi_monthly = (
+with data_tab:
 
-    gyeonggi_analysis
 
-    .groupby(
+    st.subheader(
+        f"{scope_title} 분석 데이터"
+    )
 
-        [
-            "region",
-            "year_month"
+
+    show_columns = [
+
+        "region",
+        "before_count",
+        "after_count",
+        "before_daily_avg",
+        "after_daily_avg",
+        "daily_avg_change_pct",
+        "before_share_pct",
+        "after_share_pct",
+        "share_change_pp"
+    ]
+
+
+    if (
+        scope == "경기"
+        and
+        "parent_city"
+        in summary.columns
+    ):
+
+        show_columns.insert(
+            1,
+            "parent_city"
+        )
+
+
+    data_view = (
+
+        summary[
+            show_columns
         ]
-    )
 
-    .size()
-
-    .reset_index(
-        name="transaction_count"
-    )
-)
-
-
-display(
-    gyeonggi_monthly.head()
-)
-
-# ============================================================
-# 34-2. 경기도 규제지역 월별 거래량
-# ============================================================
-
-fig = px.line(
-
-    gyeonggi_monthly,
-
-    x="year_month",
-
-    y="transaction_count",
-
-    color="region",
-
-    markers=True,
-
-    template="simple_white",
-
-    title=(
-        "경기도 신규 규제지역 "
-        "월별 아파트 거래량"
-    ),
-
-    labels={
-
-        "year_month":
-        "계약연월",
-
-        "transaction_count":
-        "거래건수",
-
-        "region":
-        "지역"
-    }
-)
-
-
-# 날짜 정책선은 add_shape 사용
-fig.add_shape(
-
-    type="line",
-
-    x0=POLICY_DATE,
-
-    x1=POLICY_DATE,
-
-    y0=0,
-
-    y1=1,
-
-    xref="x",
-
-    yref="paper",
-
-    line=dict(
-        dash="dash",
-        width=2
-    )
-)
-
-
-fig.update_layout(
-
-    hovermode="x unified",
-
-    height=650
-)
-
-
-fig.show()
-
-"""#도시별로 묶어서 비교하는 데이터도 추가"""
-
-# ============================================================
-# 35. 상위 도시 구분
-# ============================================================
-
-CITY_MAP = {
-
-    "수원시 장안구": "수원시",
-    "수원시 팔달구": "수원시",
-    "수원시 영통구": "수원시",
-
-    "성남시 수정구": "성남시",
-    "성남시 중원구": "성남시",
-    "성남시 분당구": "성남시",
-
-    "안양시 동안구": "안양시",
-
-    "용인시 수지구": "용인시",
-
-    "광명시": "광명시",
-    "과천시": "과천시",
-    "의왕시": "의왕시",
-    "하남시": "하남시"
-}
-
-
-gyeonggi_analysis[
-    "parent_city"
-] = (
-
-    gyeonggi_analysis[
-        "region"
-    ].map(
-        CITY_MAP
-    )
-)
-
-
-gyeonggi_summary[
-    "parent_city"
-] = (
-
-    gyeonggi_summary[
-        "region"
-    ].map(
-        CITY_MAP
-    )
-)
-
-
-display(
-
-    gyeonggi_summary[
-
-        [
-            "region",
-            "parent_city",
-            "before_count",
-            "after_count",
+        .sort_values(
             "daily_avg_change_pct"
-        ]
+        )
 
-    ]
-)
-
-"""#GeoJSON 준비"""
-
-# ============================================================
-# 36. 경기도 GeoJSON 불러오기
-# ============================================================
-
-GYEONGGI_GEOJSON_PATH = (
-
-    f"{GYEONGGI_GEO_PATH}/"
-    "gyeonggi_sigungu.geojson"
-)
-
-
-gyeonggi_gdf = gpd.read_file(
-
-    GYEONGGI_GEOJSON_PATH
-)
-
-
-gyeonggi_gdf = (
-
-    gyeonggi_gdf.to_crs(
-        epsg=4326
-    )
-)
-
-
-print(
-    "GeoJSON 컬럼"
-)
-
-print(
-    gyeonggi_gdf.columns.tolist()
-)
-
-
-display(
-    gyeonggi_gdf.head()
-)
-
-"""#경기도는 이름보다 SIG_CD로 결합하는 것을 추천"""
-
-# ============================================================
-# 37. GeoJSON 코드 컬럼 자동 찾기
-# ============================================================
-
-CODE_CANDIDATES = [
-
-    "SIG_CD",
-    "SGG_CD",
-    "SIGUNGU_CD",
-    "ADM_SECT_C",
-    "code",
-    "CODE"
-]
-
-
-geo_code_col = None
-
-
-for col in CODE_CANDIDATES:
-
-    if col in gyeonggi_gdf.columns:
-
-        geo_code_col = col
-
-        break
-
-
-if geo_code_col is None:
-
-    raise ValueError(
-        "GeoJSON에서 시군구 코드 컬럼을 "
-        "찾지 못했습니다."
+        .reset_index(
+            drop=True
+        )
     )
 
 
-print(
-    "사용할 코드 컬럼 :",
-    geo_code_col
-)
+    st.dataframe(
 
+        data_view,
 
-# ------------------------------------------------------------
-# 코드 5자리 문자열로 통일
-# ------------------------------------------------------------
+        use_container_width=True,
 
-gyeonggi_gdf[
-    "lawd_cd"
-] = (
+        hide_index=True,
 
-    gyeonggi_gdf[
-        geo_code_col
-    ]
+        column_config={
 
-    .astype(str)
+            "region":
+                "지역",
 
-    .str.extract(
-        r"(\d{5})"
-    )[0]
-)
+            "parent_city":
+                "상위 도시",
 
+            "before_count":
+                st.column_config.NumberColumn(
+                    "정책 이전 거래량",
+                    format="%d건"
+                ),
 
-gyeonggi_summary[
-    "lawd_cd"
-] = (
+            "after_count":
+                st.column_config.NumberColumn(
+                    "정책 이후 거래량",
+                    format="%d건"
+                ),
 
-    gyeonggi_summary[
-        "lawd_cd"
-    ]
+            "before_daily_avg":
+                st.column_config.NumberColumn(
+                    "정책 이전 일평균",
+                    format="%.2f"
+                ),
 
-    .astype(str)
+            "after_daily_avg":
+                st.column_config.NumberColumn(
+                    "정책 이후 일평균",
+                    format="%.2f"
+                ),
 
-    .str.zfill(5)
-)
+            "daily_avg_change_pct":
+                st.column_config.NumberColumn(
+                    "일평균 증감률",
+                    format="%.1f%%"
+                ),
 
-"""#GeoJSON + 경기도 거래량 결과 결합"""
+            "before_share_pct":
+                st.column_config.NumberColumn(
+                    "정책 이전 점유율",
+                    format="%.2f%%"
+                ),
 
-# ============================================================
-# 38. 경기도 GeoJSON + 거래량 분석결과
-# ============================================================
+            "after_share_pct":
+                st.column_config.NumberColumn(
+                    "정책 이후 점유율",
+                    format="%.2f%%"
+                ),
 
-gyeonggi_map_gdf = (
-
-    gyeonggi_gdf.merge(
-
-        gyeonggi_summary,
-
-        on="lawd_cd",
-
-        how="left"
-    )
-)
-
-
-# ------------------------------------------------------------
-# 규제지역 여부
-# ------------------------------------------------------------
-
-regulated_codes = set(
-
-    GYEONGGI_REGULATED.values()
-)
-
-
-gyeonggi_map_gdf[
-    "regulation_type"
-] = np.where(
-
-    gyeonggi_map_gdf[
-        "lawd_cd"
-    ].isin(
-        regulated_codes
-    ),
-
-    "2025.10.15 신규 규제지역",
-
-    "비규제지역"
-)
-
-
-print(
-    "전체 지도 객체 수 :",
-    len(gyeonggi_map_gdf)
-)
-
-
-print(
-    "규제지역 객체 수 :",
-    (
-        gyeonggi_map_gdf[
-            "regulation_type"
-        ]
-        ==
-        "2025.10.15 신규 규제지역"
-    ).sum()
-)
-
-"""#경기도 지도 라벨 위치 생성"""
-
-# ============================================================
-# 39. 지도 라벨 위치
-# ============================================================
-
-gg_temp_gdf = (
-
-    gyeonggi_map_gdf.to_crs(
-        epsg=5179
-    )
-)
-
-
-gg_label_points = (
-
-    gg_temp_gdf.geometry
-
-    .representative_point()
-)
-
-
-gg_label_points = (
-
-    gpd.GeoSeries(
-
-        gg_label_points,
-
-        crs="EPSG:5179"
+            "share_change_pp":
+                st.column_config.NumberColumn(
+                    "점유율 변화",
+                    format="%.2f%%p"
+                )
+        }
     )
 
-    .to_crs(
-        epsg=4326
+
+    # --------------------------------------------------------
+    # CSV 다운로드
+    # --------------------------------------------------------
+
+    csv_data = (
+
+        data_view
+
+        .to_csv(
+            index=False
+        )
+
+        .encode(
+            "utf-8-sig"
+        )
     )
-)
 
 
-gyeonggi_map_gdf[
-    "label_lon"
-] = (
+    st.download_button(
 
-    gg_label_points.x.values
-)
+        label="분석 결과 CSV 다운로드",
 
+        data=csv_data,
 
-gyeonggi_map_gdf[
-    "label_lat"
-] = (
+        file_name=(
 
-    gg_label_points.y.values
-)
+            "seoul_policy_summary.csv"
 
-"""#경기도 Streamlit용 GeoJSON 생성"""
+            if scope == "서울"
+
+            else
+            "gyeonggi_policy_summary.csv"
+        ),
+
+        mime="text/csv"
+    )
+
 
 # ============================================================
-# 40. 경기도 Streamlit용 GeoJSON 생성
+# 26. 분석 설명
 # ============================================================
 
-# 이름 컬럼 생성
-gyeonggi_map_gdf[
-    "name"
-] = (
-
-    gyeonggi_map_gdf[
-        "region"
-    ].fillna(
-        gyeonggi_map_gdf[
-            "lawd_cd"
-        ]
-    )
-)
+st.divider()
 
 
-gyeonggi_geojson_dict = json.loads(
-
-    gyeonggi_map_gdf.to_json()
-)
-
-
-# feature ID를 법정동 코드로 지정
-for feature in (
-    gyeonggi_geojson_dict[
-        "features"
-    ]
+with st.expander(
+    "분석 기준 및 해석 시 유의사항"
 ):
 
-    feature[
-        "id"
-    ] = (
+    st.markdown(
+        """
+        **분석 기준**
 
-        feature[
-            "properties"
-        ][
-            "lawd_cd"
-        ]
+        - 정책 기준일: 2025년 10월 15일
+        - 정책 이전: 2025년 4월 15일 ~ 2025년 10월 14일
+        - 정책 이후: 2025년 10월 15일 ~ 2026년 4월 14일
+        - 분석 대상: 아파트 매매 실거래
+        - 거래량 증감률은 두 기간의 일수 차이를 보정하기 위해
+          일평균 거래건수를 기준으로 계산했습니다.
+
+        **서울**
+
+        강남구·서초구·송파구·용산구는 기존 규제지역으로
+        이번 신규 규제지역 거래량 변화 분석에서 제외했습니다.
+
+        **경기**
+
+        2025년 10월 15일 신규 규제지역으로 지정된
+        12개 시·구를 분석했습니다.
+
+        **주의**
+
+        본 대시보드는 정책 발표 전후 거래량의 변화 패턴을
+        시각화한 기술적 분석입니다.
+        거래량 변화 전체를 정책의 인과효과로 해석해서는 안 됩니다.
+        """
     )
 
 
-GYEONGGI_OUTPUT_GEOJSON = (
-
-    f"{GYEONGGI_PROCESSED_PATH}/"
-    "gyeonggi_policy_map.geojson"
+st.caption(
+    "Data: 국토교통부 아파트 매매 실거래가 자료 · "
+    "분석기간 2025.04.15–2026.04.14"
 )
-
-
-with open(
-
-    GYEONGGI_OUTPUT_GEOJSON,
-
-    "w",
-
-    encoding="utf-8"
-
-) as f:
-
-    json.dump(
-
-        gyeonggi_geojson_dict,
-
-        f,
-
-        ensure_ascii=False
-    )
-
-
-print(
-    "경기도 GeoJSON 저장 완료"
-)
-
-"""#경기도 규제지역 거래량 변화 지도"""
-
-# ============================================================
-# 41. 경기도 규제지역 거래량 변화 지도
-# ============================================================
-
-gg_regulated_map = (
-
-    gyeonggi_map_gdf[
-
-        gyeonggi_map_gdf[
-            "regulation_type"
-        ]
-        ==
-        "2025.10.15 신규 규제지역"
-
-    ].copy()
-)
-
-
-gg_unregulated_map = (
-
-    gyeonggi_map_gdf[
-
-        gyeonggi_map_gdf[
-            "regulation_type"
-        ]
-        ==
-        "비규제지역"
-
-    ].copy()
-)
-
-
-# ------------------------------------------------------------
-# 색상범위 설정
-# ------------------------------------------------------------
-
-gg_max_abs = np.nanmax(
-
-    np.abs(
-
-        gg_regulated_map[
-            "daily_avg_change_pct"
-        ]
-    )
-)
-
-
-gg_max_abs = max(
-    gg_max_abs,
-    1
-)
-
-
-fig_gg_map = go.Figure()
-
-# ============================================================
-# 비규제지역
-# ============================================================
-
-fig_gg_map.add_trace(
-
-    go.Choropleth(
-
-        geojson=gyeonggi_geojson_dict,
-
-        locations=gg_unregulated_map[
-            "lawd_cd"
-        ],
-
-        z=[
-            1
-        ] * len(
-            gg_unregulated_map
-        ),
-
-        featureidkey="id",
-
-        colorscale=[
-
-            [0, "#E5E5E5"],
-            [1, "#E5E5E5"]
-        ],
-
-        showscale=False,
-
-        marker_line_color="white",
-
-        marker_line_width=0.7,
-
-        hovertemplate=(
-
-            "비규제지역"
-
-            "<extra></extra>"
-        )
-    )
-)
-
-# ============================================================
-# 신규 규제지역 12개
-# ============================================================
-
-gg_custom_data = np.column_stack(
-
-    [
-        gg_regulated_map[
-            "before_count"
-        ],
-
-        gg_regulated_map[
-            "after_count"
-        ],
-
-        gg_regulated_map[
-            "before_daily_avg"
-        ],
-
-        gg_regulated_map[
-            "after_daily_avg"
-        ],
-
-        gg_regulated_map[
-            "daily_avg_change_pct"
-        ]
-    ]
-)
-
-
-fig_gg_map.add_trace(
-
-    go.Choropleth(
-
-        geojson=gyeonggi_geojson_dict,
-
-        locations=gg_regulated_map[
-            "lawd_cd"
-        ],
-
-        z=gg_regulated_map[
-            "daily_avg_change_pct"
-        ],
-
-        featureidkey="id",
-
-        zmin=-gg_max_abs,
-
-        zmax=gg_max_abs,
-
-        zmid=0,
-
-        colorscale=[
-
-            [0.00, "#9c0000"],
-
-            [0.25, "#d6604d"],
-
-            [0.50, "#f7f7f7"],
-
-            [0.75, "#4393c3"],
-
-            [1.00, "#2166ac"]
-        ],
-
-        marker_line_color="white",
-
-        marker_line_width=1.4,
-
-        colorbar=dict(
-
-            title=(
-                "거래량<br>"
-                "증감률(%)"
-            ),
-
-            thickness=14
-        ),
-
-        customdata=gg_custom_data,
-
-        text=gg_regulated_map[
-            "region"
-        ],
-
-        hovertemplate=(
-
-            "<b>%{text}</b><br><br>"
-
-            "정책 이전 거래량: "
-            "%{customdata[0]:,.0f}건<br>"
-
-            "정책 이후 거래량: "
-            "%{customdata[1]:,.0f}건<br>"
-
-            "정책 이전 일평균: "
-            "%{customdata[2]:.2f}건<br>"
-
-            "정책 이후 일평균: "
-            "%{customdata[3]:.2f}건<br>"
-
-            "일평균 증감률: "
-            "%{customdata[4]:.1f}%"
-
-            "<extra></extra>"
-        )
-    )
-)
-
-# ============================================================
-# 규제지역 이름 표시
-# ============================================================
-
-fig_gg_map.add_trace(
-
-    go.Scattergeo(
-
-        lon=gg_regulated_map[
-            "label_lon"
-        ],
-
-        lat=gg_regulated_map[
-            "label_lat"
-        ],
-
-        text=gg_regulated_map[
-            "region"
-        ],
-
-        mode="text",
-
-        textfont=dict(
-
-            size=10,
-
-            color="#222222"
-        ),
-
-        hoverinfo="skip",
-
-        showlegend=False
-    )
-)
-
-
-fig_gg_map.update_geos(
-
-    fitbounds="locations",
-
-    visible=False,
-
-    projection_type="mercator"
-)
-
-
-fig_gg_map.update_layout(
-
-    title=dict(
-
-        text=(
-
-            "<b>10·15 대책 전후 "
-            "경기도 신규 규제지역 "
-            "아파트 거래량 변화</b>"
-
-            "<br>"
-
-            "<sup>"
-            "회색 = 비규제지역 / "
-            "색상 = 신규 규제지역 거래량 증감률"
-            "</sup>"
-        ),
-
-        x=0.02
-    ),
-
-    height=800,
-
-    paper_bgcolor="white",
-
-    margin=dict(
-
-        l=20,
-        r=20,
-        t=90,
-        b=20
-    )
-)
-
-
-fig_gg_map.show()
-
-"""#Streamlit용 경기도 일별 데이터 생성"""
-
-# ============================================================
-# 42. 경기도 지역별 일별 거래량
-# ============================================================
-
-gyeonggi_district_daily = (
-
-    gyeonggi_analysis
-
-    .groupby(
-        [
-            "region",
-            "deal_date"
-        ]
-    )
-
-    .size()
-
-    .reset_index(
-        name="transaction_count"
-    )
-)
-
-
-gyeonggi_district_daily = (
-
-    gyeonggi_district_daily
-
-    .sort_values(
-        [
-            "region",
-            "deal_date"
-        ]
-    )
-)
-
-
-gyeonggi_district_daily[
-    "rolling_14d"
-] = (
-
-    gyeonggi_district_daily
-
-    .groupby(
-        "region"
-    )[
-        "transaction_count"
-    ]
-
-    .transform(
-
-        lambda x:
-
-        x.rolling(
-
-            14,
-
-            center=True,
-
-            min_periods=1
-        ).mean()
-    )
-)
-
-
-display(
-    gyeonggi_district_daily.head()
-)
-
-"""#Streamlit용 경기도 데이터 저장"""
-
-# ============================================================
-# 43. 경기도 최종 데이터 저장
-# ============================================================
-
-# 개별 거래
-gyeonggi_analysis.to_csv(
-
-    f"{GYEONGGI_PROCESSED_PATH}/"
-    "gyeonggi_transactions_1015.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-# 지역별 요약
-gyeonggi_summary.to_csv(
-
-    f"{GYEONGGI_PROCESSED_PATH}/"
-    "gyeonggi_policy_summary.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-# 전체 일별
-gyeonggi_daily.to_csv(
-
-    f"{GYEONGGI_PROCESSED_PATH}/"
-    "gyeonggi_daily_transactions.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-# 지역별 일별
-gyeonggi_district_daily.to_csv(
-
-    f"{GYEONGGI_PROCESSED_PATH}/"
-    "gyeonggi_district_daily.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-# 월별
-gyeonggi_monthly.to_csv(
-
-    f"{GYEONGGI_PROCESSED_PATH}/"
-    "gyeonggi_monthly_transactions.csv",
-
-    index=False,
-
-    encoding="utf-8-sig"
-)
-
-
-print(
-    "경기도 데이터 저장 완료"
-)
-
-print(
-    GYEONGGI_PROCESSED_PATH
-)
-
