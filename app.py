@@ -685,48 +685,56 @@ def make_seoul_map(
     )
 
 
-    # --------------------------------------------------------
-    # 기존 규제지역
-    # --------------------------------------------------------
+   # --------------------------------------------------------
+# 기존 규제지역
+# 강남·서초·송파·용산
+# → 진한 적색 + 노란색 경계선
+# --------------------------------------------------------
 
-    fig.add_trace(
+fig.add_trace(
 
-        go.Choropleth(
+    go.Choropleth(
 
-            geojson=geojson,
+        geojson=geojson,
 
-            locations=(
-                SEOUL_EXISTING_REGULATED
-            ),
+        locations=(
+            SEOUL_EXISTING_REGULATED
+        ),
 
-            z=[1, 1, 1, 1],
+        z=[1, 1, 1, 1],
 
-            featureidkey="id",
+        featureidkey="id",
 
-            colorscale=[
+        # 기존 규제지역 내부 색상
+        colorscale=[
 
-                [0, "#7f0000"],
-                [1, "#7f0000"]
-            ],
+            [0, "#7f0000"],
+            [1, "#7f0000"]
+        ],
 
-            showscale=False,
+        showscale=False,
 
-            marker_line_color="white",
+        # ====================================================
+        # 기존 규제지역 경계 = 노란색
+        # ====================================================
 
-            marker_line_width=1.8,
+        marker_line_color="#FFD400",
 
-            hovertemplate=(
+        marker_line_width=4,
 
-                "<b>%{location}</b>"
-                "<br>기존 규제지역"
-                "<br>이번 변화량 분석 제외"
+        name="기존 규제지역",
 
-                "<extra></extra>"
-            )
+        hovertemplate=(
+
+            "<b>%{location}</b>"
+            "<br><br>기존 규제지역"
+            "<br>강남·서초·송파·용산"
+            "<br>이번 변화량 분석에서는 제외"
+
+            "<extra></extra>"
         )
     )
-
-
+)
     # --------------------------------------------------------
     # 지도 라벨
     # --------------------------------------------------------
@@ -1540,174 +1548,113 @@ def make_ranking_chart(
 
 
     return fig
+# ============================================================
+# 16. 통합 Dashboard
+# 서울 + 경기를 한 페이지에서 동시에 표시
+# ============================================================
 
 
 # ============================================================
-# 16. 권역 선택
+# SIDEBAR
 # ============================================================
 
 with st.sidebar:
 
     st.title(
-        "Dashboard"
+        "10·15 Policy Dashboard"
     )
 
-
-    scope = st.radio(
-
-        "분석 권역",
-
-        options=[
-            "서울",
-            "경기"
-        ],
-
-        horizontal=True
+    st.caption(
+        "서울·경기 아파트 거래시장 변화"
     )
-
 
     st.divider()
 
 
-# ============================================================
-# 17. 권역별 데이터 연결
-# ============================================================
+    # --------------------------------------------------------
+    # 서울 상세지역 선택
+    # --------------------------------------------------------
 
-if scope == "서울":
-
-    summary = (
-        seoul_summary.copy()
+    st.subheader(
+        "서울 상세지역"
     )
 
-    daily = (
-        seoul_daily.copy()
-    )
+    selected_seoul = st.selectbox(
 
-    district_daily = (
-        seoul_district_daily.copy()
-    )
-
-    monthly = (
-        seoul_monthly.copy()
-    )
-
-    geojson = (
-        seoul_geojson
-    )
-
-    scope_title = (
-        "서울 신규 규제대상 21개 자치구"
-    )
-
-    map_note = (
-        "강남·서초·송파·용산은 "
-        "기존 규제지역으로 별도 표시"
-    )
-
-
-else:
-
-    summary = (
-        gyeonggi_summary.copy()
-    )
-
-    daily = (
-        gyeonggi_daily.copy()
-    )
-
-    district_daily = (
-        gyeonggi_district_daily.copy()
-    )
-
-    monthly = (
-        gyeonggi_monthly.copy()
-    )
-
-    geojson = (
-        gyeonggi_geojson
-    )
-
-    scope_title = (
-        "경기도 신규 규제지역 12개"
-    )
-
-    map_note = (
-        "회색은 비규제·비분석지역"
-    )
-
-
-# ============================================================
-# 18. Sidebar 지역 선택
-# ============================================================
-
-with st.sidebar:
-
-    selected_region = st.selectbox(
-
-        "지역 상세보기",
+        "서울 자치구",
 
         options=sorted(
-            summary[
+
+            seoul_summary[
                 "region"
-            ].dropna().tolist()
-        )
-    )
-
-
-    # 경기도인 경우 도시정보도 표시
-    if (
-        scope == "경기"
-        and
-        "parent_city"
-        in summary.columns
-    ):
-
-        selected_city = (
-
-            summary.loc[
-                summary[
-                    "region"
-                ]
-                ==
-                selected_region,
-                "parent_city"
             ]
 
-            .iloc[0]
-        )
+            .dropna()
 
+            .tolist()
+        ),
 
-        st.caption(
-            f"상위 도시 : {selected_city}"
-        )
+        key="selected_seoul"
+    )
 
 
     st.divider()
 
+
+    # --------------------------------------------------------
+    # 경기 상세지역 선택
+    # --------------------------------------------------------
+
+    st.subheader(
+        "경기 상세지역"
+    )
+
+    selected_gyeonggi = st.selectbox(
+
+        "경기 시·구",
+
+        options=sorted(
+
+            gyeonggi_summary[
+                "region"
+            ]
+
+            .dropna()
+
+            .tolist()
+        ),
+
+        key="selected_gyeonggi"
+    )
+
+
+    st.divider()
+
+
+    # --------------------------------------------------------
+    # 분석기간
+    # --------------------------------------------------------
 
     st.caption(
         "분석기간"
     )
 
-    st.write(
-        "**정책 이전**"
-    )
+    st.markdown(
+        """
+        **정책 이전**  
+        2025.04.15 ~ 2025.10.14
 
-    st.write(
-        "2025.04.15 ~ 2025.10.14"
-    )
+        **정책 발표일**  
+        2025.10.15
 
-    st.write(
-        "**정책 이후**"
-    )
-
-    st.write(
-        "2025.10.15 ~ 2026.04.14"
+        **정책 이후**  
+        2025.10.15 ~ 2026.04.14
+        """
     )
 
 
 # ============================================================
-# 19. Header
+# HEADER
 # ============================================================
 
 st.title(
@@ -1716,61 +1663,111 @@ st.title(
 
 st.caption(
     "2025년 10월 15일 정책 발표 전후 "
-    "6개월간 아파트 매매 실거래량 비교"
-)
-
-
-st.markdown(
-    f"### {scope_title}"
+    "6개월간 서울 및 경기 신규 규제지역 "
+    "아파트 매매 실거래량 비교"
 )
 
 
 # ============================================================
-# 20. 전체 KPI 계산
+# 지도 분석지표 선택
 # ============================================================
 
-total_before = (
-    summary[
+metric_choice = st.radio(
+
+    "지도 및 지역 순위 지표",
+
+    options=[
+
+        "일평균 거래량 증감률",
+
+        "분석대상 내 거래점유율 변화"
+    ],
+
+    horizontal=True
+)
+
+
+if metric_choice == (
+    "일평균 거래량 증감률"
+):
+
+    metric_col = (
+        "daily_avg_change_pct"
+    )
+
+    metric_name = (
+        "증감률(%)"
+    )
+
+
+else:
+
+    metric_col = (
+        "share_change_pp"
+    )
+
+    metric_name = (
+        "점유율 변화(%p)"
+    )
+
+
+st.divider()
+
+
+# ============================================================
+# 17. 서울 KPI 계산
+# ============================================================
+
+seoul_total_before = (
+
+    seoul_summary[
         "before_count"
     ].sum()
 )
 
-total_after = (
-    summary[
+
+seoul_total_after = (
+
+    seoul_summary[
         "after_count"
     ].sum()
 )
 
 
-before_daily = (
-    total_before
+seoul_before_daily = (
+
+    seoul_total_before
+
     / BEFORE_DAYS
 )
 
-after_daily = (
-    total_after
+
+seoul_after_daily = (
+
+    seoul_total_after
+
     / AFTER_DAYS
 )
 
 
-overall_change_pct = (
+seoul_change_pct = (
 
     (
-        after_daily
+        seoul_after_daily
         -
-        before_daily
+        seoul_before_daily
     )
 
     /
-    before_daily
+    seoul_before_daily
 
     * 100
 )
 
 
-largest_drop = (
+seoul_largest_drop = (
 
-    summary
+    seoul_summary
 
     .sort_values(
         "daily_avg_change_pct"
@@ -1780,13 +1777,63 @@ largest_drop = (
 )
 
 
-largest_increase = (
+# ============================================================
+# 18. 경기 KPI 계산
+# ============================================================
 
-    summary
+gg_total_before = (
+
+    gyeonggi_summary[
+        "before_count"
+    ].sum()
+)
+
+
+gg_total_after = (
+
+    gyeonggi_summary[
+        "after_count"
+    ].sum()
+)
+
+
+gg_before_daily = (
+
+    gg_total_before
+
+    / BEFORE_DAYS
+)
+
+
+gg_after_daily = (
+
+    gg_total_after
+
+    / AFTER_DAYS
+)
+
+
+gg_change_pct = (
+
+    (
+        gg_after_daily
+        -
+        gg_before_daily
+    )
+
+    /
+    gg_before_daily
+
+    * 100
+)
+
+
+gg_largest_drop = (
+
+    gyeonggi_summary
 
     .sort_values(
-        "daily_avg_change_pct",
-        ascending=False
+        "daily_avg_change_pct"
     )
 
     .iloc[0]
@@ -1794,77 +1841,127 @@ largest_increase = (
 
 
 # ============================================================
-# 21. KPI 카드
+# 19. 서울 KPI
 # ============================================================
 
-kpi1, kpi2, kpi3, kpi4 = (
-    st.columns(4)
+st.subheader(
+    "서울 신규 규제지역"
 )
 
 
-with kpi1:
+s1, s2, s3, s4 = st.columns(
+    4
+)
+
+
+with s1:
 
     st.metric(
 
         "정책 이전 거래량",
 
-        f"{total_before:,.0f}건",
-
-        help=(
-            "2025.04.15~2025.10.14 "
-            "전체 거래건수"
-        )
+        f"{seoul_total_before:,.0f}건"
     )
 
 
-with kpi2:
+with s2:
 
     st.metric(
 
         "정책 이후 거래량",
 
-        f"{total_after:,.0f}건",
-
-        delta=(
-            f"{overall_change_pct:.1f}% "
-            "일평균"
-        ),
-
-        help=(
-            "2025.10.15~2026.04.14 "
-            "전체 거래건수"
-        )
+        f"{seoul_total_after:,.0f}건"
     )
 
 
-with kpi3:
+with s3:
+
+    st.metric(
+
+        "일평균 거래량 변화",
+
+        f"{seoul_change_pct:.1f}%",
+
+        delta=f"{seoul_change_pct:.1f}%"
+    )
+
+
+with s4:
 
     st.metric(
 
         "거래량 최대 감소",
 
-        largest_drop[
+        seoul_largest_drop[
             "region"
         ],
 
         delta=(
-            f"{largest_drop['daily_avg_change_pct']:.1f}%"
+
+            f"{seoul_largest_drop['daily_avg_change_pct']:.1f}%"
         )
     )
 
 
-with kpi4:
+# ============================================================
+# 20. 경기 KPI
+# ============================================================
+
+st.subheader(
+    "경기도 신규 규제지역"
+)
+
+
+g1, g2, g3, g4 = st.columns(
+    4
+)
+
+
+with g1:
 
     st.metric(
 
-        "상대적 최대 증가",
+        "정책 이전 거래량",
 
-        largest_increase[
+        f"{gg_total_before:,.0f}건"
+    )
+
+
+with g2:
+
+    st.metric(
+
+        "정책 이후 거래량",
+
+        f"{gg_total_after:,.0f}건"
+    )
+
+
+with g3:
+
+    st.metric(
+
+        "일평균 거래량 변화",
+
+        f"{gg_change_pct:.1f}%",
+
+        delta=f"{gg_change_pct:.1f}%"
+    )
+
+
+with g4:
+
+    st.metric(
+
+        "거래량 최대 감소",
+
+        gg_largest_drop[
             "region"
         ],
 
         delta=(
-            f"{largest_increase['daily_avg_change_pct']:.1f}%"
+
+            f"{gg_largest_drop['daily_avg_change_pct']:.1f}%"
         )
     )
 
@@ -1873,185 +1970,58 @@ st.divider()
 
 
 # ============================================================
-# 22. Tab 구성
+# 21. 서울 + 경기 지도 동시 표시
 # ============================================================
 
-overview_tab, detail_tab, data_tab = st.tabs(
-
-    [
-        "Overview",
-        "지역 상세",
-        "Data"
-    ]
+st.header(
+    "공간별 거래시장 변화"
 )
 
 
-# ============================================================
-# 23. OVERVIEW
-# ============================================================
-
-with overview_tab:
-
-
-    # --------------------------------------------------------
-    # 지도 지표 선택
-    # --------------------------------------------------------
-
-    metric_choice = st.radio(
-
-        "지도·순위 지표",
-
-        options=[
-
-            "일평균 거래량 증감률",
-
-            "분석대상 내 거래점유율 변화"
-        ],
-
-        horizontal=True
-    )
+st.caption(
+    "붉은색은 거래량 감소, "
+    "파란색은 거래량 증가를 의미합니다. "
+    "서울의 노란색 테두리는 10·15 대책 이전부터 "
+    "규제지역이었던 강남·서초·송파·용산입니다."
+)
 
 
-    if metric_choice == (
-        "일평균 거래량 증감률"
-    ):
-
-        metric_col = (
-            "daily_avg_change_pct"
-        )
-
-        metric_name = (
-            "증감률(%)"
-        )
+map_left, map_right = st.columns(
+    [1, 1]
+)
 
 
-    else:
+# ------------------------------------------------------------
+# 서울 지도
+# ------------------------------------------------------------
 
-        metric_col = (
-            "share_change_pp"
-        )
-
-        metric_name = (
-            "점유율 변화(%p)"
-        )
-
-
-    # --------------------------------------------------------
-    # 지도 + 순위
-    # --------------------------------------------------------
-
-    map_col, rank_col = st.columns(
-        [1.45, 1]
-    )
-
-
-    with map_col:
-
-        st.subheader(
-            "공간별 거래시장 변화"
-        )
-
-
-        st.caption(
-            map_note
-        )
-
-
-        if scope == "서울":
-
-            map_fig = make_seoul_map(
-
-                summary,
-
-                geojson,
-
-                metric_col,
-
-                metric_name
-            )
-
-
-        else:
-
-            map_fig = make_gyeonggi_map(
-
-                summary,
-
-                geojson,
-
-                metric_col,
-
-                metric_name
-            )
-
-
-        st.plotly_chart(
-
-            map_fig,
-
-            use_container_width=True,
-
-            config={
-                "displayModeBar": False
-            }
-        )
-
-
-    with rank_col:
-
-        st.subheader(
-            "지역별 변화 순위"
-        )
-
-
-        rank_fig = make_ranking_chart(
-
-            summary,
-
-            metric_col,
-
-            metric_name
-        )
-
-
-        st.plotly_chart(
-
-            rank_fig,
-
-            use_container_width=True,
-
-            config={
-                "displayModeBar": False
-            }
-        )
-
-
-    st.divider()
-
-
-    # --------------------------------------------------------
-    # 전체 일별 시계열
-    # --------------------------------------------------------
+with map_left:
 
     st.subheader(
-        "전체 아파트 매매 거래량 추이"
+        "서울"
+    )
+
+    st.caption(
+        "21개 신규 규제지역 / "
+        "노란 테두리 = 기존 규제지역"
     )
 
 
-    daily_fig = make_daily_chart(
+    seoul_map_fig = make_seoul_map(
 
-        daily,
+        seoul_summary,
 
-        (
-            f"{scope_title} "
-            "일별 거래량 변화"
-        )
+        seoul_geojson,
+
+        metric_col,
+
+        metric_name
     )
 
 
     st.plotly_chart(
 
-        daily_fig,
+        seoul_map_fig,
 
         use_container_width=True,
 
@@ -2061,33 +2031,265 @@ with overview_tab:
     )
 
 
-    st.caption(
-        "얇은 선은 일별 거래량, "
-        "굵은 선은 14일 이동평균입니다."
-    )
+# ------------------------------------------------------------
+# 경기 지도
+# ------------------------------------------------------------
 
-
-# ============================================================
-# 24. 지역 상세
-# ============================================================
-
-with detail_tab:
-
+with map_right:
 
     st.subheader(
-        selected_region
+        "경기도"
+    )
+
+    st.caption(
+        "색상지역 = 10·15 신규 규제지역 / "
+        "회색 = 비규제·비분석지역"
     )
 
 
-    selected_summary = (
+    gyeonggi_map_fig = (
+        make_gyeonggi_map(
 
-        summary[
+            gyeonggi_summary,
 
-            summary[
+            gyeonggi_geojson,
+
+            metric_col,
+
+            metric_name
+        )
+    )
+
+
+    st.plotly_chart(
+
+        gyeonggi_map_fig,
+
+        use_container_width=True,
+
+        config={
+            "displayModeBar": False
+        }
+    )
+
+
+st.divider()
+
+
+# ============================================================
+# 22. 지역별 변화 순위
+# ============================================================
+
+st.header(
+    "지역별 거래시장 변화 순위"
+)
+
+
+rank_left, rank_right = st.columns(
+    [1, 1]
+)
+
+
+# ------------------------------------------------------------
+# 서울 순위
+# ------------------------------------------------------------
+
+with rank_left:
+
+    st.subheader(
+        "서울"
+    )
+
+
+    seoul_rank_fig = (
+
+        make_ranking_chart(
+
+            seoul_summary,
+
+            metric_col,
+
+            metric_name
+        )
+    )
+
+
+    seoul_rank_fig.update_layout(
+        height=650
+    )
+
+
+    st.plotly_chart(
+
+        seoul_rank_fig,
+
+        use_container_width=True,
+
+        config={
+            "displayModeBar": False
+        }
+    )
+
+
+# ------------------------------------------------------------
+# 경기 순위
+# ------------------------------------------------------------
+
+with rank_right:
+
+    st.subheader(
+        "경기도"
+    )
+
+
+    gg_rank_fig = (
+
+        make_ranking_chart(
+
+            gyeonggi_summary,
+
+            metric_col,
+
+            metric_name
+        )
+    )
+
+
+    gg_rank_fig.update_layout(
+        height=650
+    )
+
+
+    st.plotly_chart(
+
+        gg_rank_fig,
+
+        use_container_width=True,
+
+        config={
+            "displayModeBar": False
+        }
+    )
+
+
+st.divider()
+
+
+# ============================================================
+# 23. 서울 + 경기 전체 일별 거래량
+# ============================================================
+
+st.header(
+    "정책 발표 전후 거래량 추이"
+)
+
+
+trend_left, trend_right = st.columns(
+    [1, 1]
+)
+
+
+# ------------------------------------------------------------
+# 서울 전체
+# ------------------------------------------------------------
+
+with trend_left:
+
+    seoul_daily_fig = (
+
+        make_daily_chart(
+
+            seoul_daily,
+
+            "서울 신규 규제지역 일별 거래량"
+        )
+    )
+
+
+    st.plotly_chart(
+
+        seoul_daily_fig,
+
+        use_container_width=True,
+
+        config={
+            "displayModeBar": False
+        }
+    )
+
+
+# ------------------------------------------------------------
+# 경기 전체
+# ------------------------------------------------------------
+
+with trend_right:
+
+    gg_daily_fig = (
+
+        make_daily_chart(
+
+            gyeonggi_daily,
+
+            "경기 신규 규제지역 일별 거래량"
+        )
+    )
+
+
+    st.plotly_chart(
+
+        gg_daily_fig,
+
+        use_container_width=True,
+
+        config={
+            "displayModeBar": False
+        }
+    )
+
+
+st.caption(
+    "얇은 선 = 일별 거래량 / "
+    "굵은 선 = 14일 이동평균"
+)
+
+
+st.divider()
+
+
+# ============================================================
+# 24. 지역 상세 분석
+# ============================================================
+
+st.header(
+    "지역 상세 비교"
+)
+
+
+detail_left, detail_right = st.columns(
+    [1, 1]
+)
+
+
+# ============================================================
+# 서울 상세
+# ============================================================
+
+with detail_left:
+
+    st.subheader(
+        f"서울 · {selected_seoul}"
+    )
+
+
+    selected_seoul_summary = (
+
+        seoul_summary[
+
+            seoul_summary[
                 "region"
             ]
             ==
-            selected_region
+            selected_seoul
 
         ]
 
@@ -2095,90 +2297,72 @@ with detail_tab:
     )
 
 
-    d1, d2, d3, d4 = (
-        st.columns(4)
+    ss1, ss2, ss3 = st.columns(
+        3
     )
 
 
-    with d1:
+    with ss1:
 
         st.metric(
 
-            "정책 이전 거래량",
+            "정책 이전",
 
             (
-                f"{selected_summary['before_count']:,.0f}건"
+                f"{selected_seoul_summary['before_count']:,.0f}건"
             )
         )
 
 
-    with d2:
+    with ss2:
 
         st.metric(
 
-            "정책 이후 거래량",
+            "정책 이후",
 
             (
-                f"{selected_summary['after_count']:,.0f}건"
+                f"{selected_seoul_summary['after_count']:,.0f}건"
             )
         )
 
 
-    with d3:
+    with ss3:
 
         st.metric(
 
-            "일평균 거래량 변화",
+            "일평균 증감률",
 
             (
-                f"{selected_summary['daily_avg_change_pct']:.1f}%"
+                f"{selected_seoul_summary['daily_avg_change_pct']:.1f}%"
             )
         )
 
 
-    with d4:
+    selected_seoul_daily = (
 
-        st.metric(
-
-            "거래 점유율 변화",
-
-            (
-                f"{selected_summary['share_change_pp']:.2f}%p"
-            )
-        )
-
-
-    st.divider()
-
-
-    # --------------------------------------------------------
-    # 지역별 일별 시계열
-    # --------------------------------------------------------
-
-    selected_daily = (
         prepare_region_daily(
 
-            district_daily,
+            seoul_district_daily,
 
-            selected_region
+            selected_seoul
         )
     )
 
 
-    detail_fig = make_daily_chart(
+    selected_seoul_fig = (
 
-        selected_daily,
+        make_daily_chart(
 
-        (
-            f"{selected_region} "
-            "일별 아파트 거래량 변화"
+            selected_seoul_daily,
+
+            f"{selected_seoul} 거래량"
         )
     )
 
 
     st.plotly_chart(
 
-        detail_fig,
+        selected_seoul_fig,
 
         use_container_width=True,
 
@@ -2188,337 +2372,415 @@ with detail_tab:
     )
 
 
-    # --------------------------------------------------------
-    # 월별 추이 + Before/After
-    # --------------------------------------------------------
-
-    left_chart, right_chart = (
-        st.columns(
-            [1.5, 1]
-        )
-    )
-
-
-    with left_chart:
-
-        st.subheader(
-            "월별 거래량"
-        )
-
-
-        selected_monthly = (
-
-            monthly[
-
-                monthly[
-                    "region"
-                ]
-                ==
-                selected_region
-
-            ]
-
-            .copy()
-        )
-
-
-        monthly_fig = px.line(
-
-            selected_monthly,
-
-            x="year_month",
-
-            y="transaction_count",
-
-            markers=True,
-
-            labels={
-
-                "year_month":
-                    "계약연월",
-
-                "transaction_count":
-                    "거래건수"
-            }
-        )
-
-
-        monthly_fig = add_policy_line(
-
-            monthly_fig,
-
-            "10·15 대책"
-        )
-
-
-        monthly_fig.update_layout(
-
-            template="simple_white",
-
-            height=420,
-
-            margin=dict(
-                l=10,
-                r=10,
-                t=30,
-                b=10
-            )
-        )
-
-
-        st.plotly_chart(
-
-            monthly_fig,
-
-            use_container_width=True,
-
-            config={
-                "displayModeBar": False
-            }
-        )
-
-
-        st.caption(
-            "2025년 4월과 2026년 4월은 "
-            "분석기간 경계 때문에 부분월입니다."
-        )
-
-
-    with right_chart:
-
-        st.subheader(
-            "정책 전후 6개월 비교"
-        )
-
-
-        compare_df = pd.DataFrame({
-
-            "기간": [
-                "정책 이전",
-                "정책 이후"
-            ],
-
-            "거래건수": [
-
-                selected_summary[
-                    "before_count"
-                ],
-
-                selected_summary[
-                    "after_count"
-                ]
-            ]
-        })
-
-
-        compare_fig = px.bar(
-
-            compare_df,
-
-            x="기간",
-
-            y="거래건수",
-
-            text_auto=",",
-
-            labels={
-                "거래건수":
-                    "거래건수"
-            }
-        )
-
-
-        compare_fig.update_layout(
-
-            template="simple_white",
-
-            showlegend=False,
-
-            height=420,
-
-            margin=dict(
-                l=10,
-                r=10,
-                t=30,
-                b=10
-            )
-        )
-
-
-        st.plotly_chart(
-
-            compare_fig,
-
-            use_container_width=True,
-
-            config={
-                "displayModeBar": False
-            }
-        )
-
-
 # ============================================================
-# 25. DATA
+# 경기 상세
 # ============================================================
 
-with data_tab:
-
+with detail_right:
 
     st.subheader(
-        f"{scope_title} 분석 데이터"
+        f"경기 · {selected_gyeonggi}"
     )
 
 
-    show_columns = [
+    selected_gg_summary = (
 
-        "region",
-        "before_count",
-        "after_count",
-        "before_daily_avg",
-        "after_daily_avg",
-        "daily_avg_change_pct",
-        "before_share_pct",
-        "after_share_pct",
-        "share_change_pp"
-    ]
+        gyeonggi_summary[
 
+            gyeonggi_summary[
+                "region"
+            ]
+            ==
+            selected_gyeonggi
 
-    if (
-        scope == "경기"
-        and
-        "parent_city"
-        in summary.columns
-    ):
-
-        show_columns.insert(
-            1,
-            "parent_city"
-        )
-
-
-    data_view = (
-
-        summary[
-            show_columns
         ]
 
-        .sort_values(
-            "daily_avg_change_pct"
+        .iloc[0]
+    )
+
+
+    gs1, gs2, gs3 = st.columns(
+        3
+    )
+
+
+    with gs1:
+
+        st.metric(
+
+            "정책 이전",
+
+            (
+                f"{selected_gg_summary['before_count']:,.0f}건"
+            )
         )
 
-        .reset_index(
-            drop=True
+
+    with gs2:
+
+        st.metric(
+
+            "정책 이후",
+
+            (
+                f"{selected_gg_summary['after_count']:,.0f}건"
+            )
+        )
+
+
+    with gs3:
+
+        st.metric(
+
+            "일평균 증감률",
+
+            (
+                f"{selected_gg_summary['daily_avg_change_pct']:.1f}%"
+            )
+        )
+
+
+    selected_gg_daily = (
+
+        prepare_region_daily(
+
+            gyeonggi_district_daily,
+
+            selected_gyeonggi
         )
     )
 
 
-    st.dataframe(
+    selected_gg_fig = (
 
-        data_view,
+        make_daily_chart(
+
+            selected_gg_daily,
+
+            f"{selected_gyeonggi} 거래량"
+        )
+    )
+
+
+    st.plotly_chart(
+
+        selected_gg_fig,
 
         use_container_width=True,
 
-        hide_index=True,
-
-        column_config={
-
-            "region":
-                "지역",
-
-            "parent_city":
-                "상위 도시",
-
-            "before_count":
-                st.column_config.NumberColumn(
-                    "정책 이전 거래량",
-                    format="%d건"
-                ),
-
-            "after_count":
-                st.column_config.NumberColumn(
-                    "정책 이후 거래량",
-                    format="%d건"
-                ),
-
-            "before_daily_avg":
-                st.column_config.NumberColumn(
-                    "정책 이전 일평균",
-                    format="%.2f"
-                ),
-
-            "after_daily_avg":
-                st.column_config.NumberColumn(
-                    "정책 이후 일평균",
-                    format="%.2f"
-                ),
-
-            "daily_avg_change_pct":
-                st.column_config.NumberColumn(
-                    "일평균 증감률",
-                    format="%.1f%%"
-                ),
-
-            "before_share_pct":
-                st.column_config.NumberColumn(
-                    "정책 이전 점유율",
-                    format="%.2f%%"
-                ),
-
-            "after_share_pct":
-                st.column_config.NumberColumn(
-                    "정책 이후 점유율",
-                    format="%.2f%%"
-                ),
-
-            "share_change_pp":
-                st.column_config.NumberColumn(
-                    "점유율 변화",
-                    format="%.2f%%p"
-                )
+        config={
+            "displayModeBar": False
         }
     )
 
 
-    # --------------------------------------------------------
-    # CSV 다운로드
-    # --------------------------------------------------------
-
-    csv_data = (
-
-        data_view
-
-        .to_csv(
-            index=False
-        )
-
-        .encode(
-            "utf-8-sig"
-        )
-    )
-
-
-    st.download_button(
-
-        label="분석 결과 CSV 다운로드",
-
-        data=csv_data,
-
-        file_name=(
-
-            "seoul_policy_summary.csv"
-
-            if scope == "서울"
-
-            else
-            "gyeonggi_policy_summary.csv"
-        ),
-
-        mime="text/csv"
-    )
+st.divider()
 
 
 # ============================================================
-# 26. 분석 설명
+# 25. 정책 전후 지역별 거래량 비교
+# ============================================================
+
+st.header(
+    "정책 전후 거래량 직접 비교"
+)
+
+
+compare_left, compare_right = st.columns(
+    [1, 1]
+)
+
+
+# ------------------------------------------------------------
+# 서울
+# ------------------------------------------------------------
+
+with compare_left:
+
+    seoul_compare = (
+
+        seoul_summary[
+            [
+                "region",
+                "before_count",
+                "after_count"
+            ]
+        ]
+
+        .melt(
+
+            id_vars="region",
+
+            value_vars=[
+                "before_count",
+                "after_count"
+            ],
+
+            var_name="period",
+
+            value_name="transaction_count"
+        )
+    )
+
+
+    seoul_compare[
+        "period"
+    ] = (
+
+        seoul_compare[
+            "period"
+        ]
+
+        .replace({
+
+            "before_count":
+                "정책 이전",
+
+            "after_count":
+                "정책 이후"
+        })
+    )
+
+
+    fig_seoul_compare = px.bar(
+
+        seoul_compare,
+
+        y="region",
+
+        x="transaction_count",
+
+        color="period",
+
+        orientation="h",
+
+        barmode="group",
+
+        title="서울",
+
+        labels={
+
+            "region":
+                "",
+
+            "transaction_count":
+                "거래건수",
+
+            "period":
+                "기간"
+        }
+    )
+
+
+    fig_seoul_compare.update_layout(
+
+        template="simple_white",
+
+        height=750
+    )
+
+
+    st.plotly_chart(
+
+        fig_seoul_compare,
+
+        use_container_width=True
+    )
+
+
+# ------------------------------------------------------------
+# 경기
+# ------------------------------------------------------------
+
+with compare_right:
+
+    gg_compare = (
+
+        gyeonggi_summary[
+            [
+                "region",
+                "before_count",
+                "after_count"
+            ]
+        ]
+
+        .melt(
+
+            id_vars="region",
+
+            value_vars=[
+                "before_count",
+                "after_count"
+            ],
+
+            var_name="period",
+
+            value_name="transaction_count"
+        )
+    )
+
+
+    gg_compare[
+        "period"
+    ] = (
+
+        gg_compare[
+            "period"
+        ]
+
+        .replace({
+
+            "before_count":
+                "정책 이전",
+
+            "after_count":
+                "정책 이후"
+        })
+    )
+
+
+    fig_gg_compare = px.bar(
+
+        gg_compare,
+
+        y="region",
+
+        x="transaction_count",
+
+        color="period",
+
+        orientation="h",
+
+        barmode="group",
+
+        title="경기도",
+
+        labels={
+
+            "region":
+                "",
+
+            "transaction_count":
+                "거래건수",
+
+            "period":
+                "기간"
+        }
+    )
+
+
+    fig_gg_compare.update_layout(
+
+        template="simple_white",
+
+        height=750
+    )
+
+
+    st.plotly_chart(
+
+        fig_gg_compare,
+
+        use_container_width=True
+    )
+
+
+st.divider()
+
+
+# ============================================================
+# 26. 데이터 테이블
+# ============================================================
+
+with st.expander(
+    "분석 데이터 확인"
+):
+
+    data_left, data_right = (
+        st.columns(2)
+    )
+
+
+    with data_left:
+
+        st.subheader(
+            "서울"
+        )
+
+
+        st.dataframe(
+
+            seoul_summary[
+                [
+                    "region",
+                    "before_count",
+                    "after_count",
+                    "before_daily_avg",
+                    "after_daily_avg",
+                    "daily_avg_change_pct",
+                    "share_change_pp"
+                ]
+            ]
+
+            .sort_values(
+                "daily_avg_change_pct"
+            ),
+
+            use_container_width=True,
+
+            hide_index=True
+        )
+
+
+    with data_right:
+
+        st.subheader(
+            "경기도"
+        )
+
+
+        gg_columns = [
+
+            "region",
+            "before_count",
+            "after_count",
+            "before_daily_avg",
+            "after_daily_avg",
+            "daily_avg_change_pct",
+            "share_change_pp"
+        ]
+
+
+        if (
+            "parent_city"
+            in
+            gyeonggi_summary.columns
+        ):
+
+            gg_columns.insert(
+                1,
+                "parent_city"
+            )
+
+
+        st.dataframe(
+
+            gyeonggi_summary[
+                gg_columns
+            ]
+
+            .sort_values(
+                "daily_avg_change_pct"
+            ),
+
+            use_container_width=True,
+
+            hide_index=True
+        )
+
+
+# ============================================================
+# 27. 분석 설명
 # ============================================================
 
 st.divider()
@@ -2530,35 +2792,45 @@ with st.expander(
 
     st.markdown(
         """
-        **분석 기준**
+        ### 분석기간
 
-        - 정책 기준일: 2025년 10월 15일
-        - 정책 이전: 2025년 4월 15일 ~ 2025년 10월 14일
-        - 정책 이후: 2025년 10월 15일 ~ 2026년 4월 14일
-        - 분석 대상: 아파트 매매 실거래
-        - 거래량 증감률은 두 기간의 일수 차이를 보정하기 위해
-          일평균 거래건수를 기준으로 계산했습니다.
+        - **정책 이전**  
+          2025.04.15 ~ 2025.10.14
 
-        **서울**
+        - **정책 기준일**  
+          2025.10.15
 
-        강남구·서초구·송파구·용산구는 기존 규제지역으로
-        이번 신규 규제지역 거래량 변화 분석에서 제외했습니다.
+        - **정책 이후**  
+          2025.10.15 ~ 2026.04.14
 
-        **경기**
+
+        ### 서울
+
+        강남구·서초구·송파구·용산구는
+        10·15 대책 이전의 기존 규제지역이므로
+        신규 규제지역 거래량 변화 분석에서는 제외했습니다.
+
+        지도에서는 해당 4개 자치구를
+        **노란색 경계선**으로 표시했습니다.
+
+
+        ### 경기도
 
         2025년 10월 15일 신규 규제지역으로 지정된
-        12개 시·구를 분석했습니다.
+        12개 시·구의 거래량 변화를 분석합니다.
 
-        **주의**
 
-        본 대시보드는 정책 발표 전후 거래량의 변화 패턴을
-        시각화한 기술적 분석입니다.
-        거래량 변화 전체를 정책의 인과효과로 해석해서는 안 됩니다.
+        ### 해석 주의
+
+        본 분석은 정책 발표 전후의 거래량 변화를
+        비교한 기술적 분석입니다.
+
+        거래량 변화 전체를 정책의 인과효과로
+        해석해서는 안 됩니다.
         """
     )
 
 
 st.caption(
-    "Data: 국토교통부 아파트 매매 실거래가 자료 · "
-    "분석기간 2025.04.15–2026.04.14"
+    "Data: 국토교통부 아파트 매매 실거래가 자료"
 )
