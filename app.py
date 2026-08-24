@@ -532,7 +532,6 @@ def get_geo_label_data(geojson):
         rows
     )
 
-
 # ============================================================
 # 10. 서울 지도
 # ============================================================
@@ -544,25 +543,29 @@ def make_seoul_map(
     metric_name
 ):
 
+    # ========================================================
+    # 1. 지도에 사용할 데이터 준비
+    # ========================================================
+
     map_df = summary.copy()
 
 
-    map_df[metric_col] = (
-        pd.to_numeric(
-            map_df[metric_col],
-            errors="coerce"
-        )
+    # 시각화할 지표를 숫자형으로 변환
+    map_df[metric_col] = pd.to_numeric(
+        map_df[metric_col],
+        errors="coerce"
     )
 
 
+    # ========================================================
+    # 2. 색상 범위 설정
+    #
+    # 감소(-)와 증가(+)를 0 기준으로 대칭 표현
+    # ========================================================
+
     valid_values = (
-
-        map_df[
-            metric_col
-        ]
-
+        map_df[metric_col]
         .dropna()
-
         .abs()
     )
 
@@ -579,35 +582,24 @@ def make_seoul_map(
         max_abs = 1
 
 
+    # ========================================================
+    # 3. Figure 생성
+    # ========================================================
+
     fig = go.Figure()
 
 
-    # --------------------------------------------------------
-    # 신규 규제지역 21개
-    # --------------------------------------------------------
+    # ========================================================
+    # 4. 2025.10.15 신규 규제지역 21개
+    # ========================================================
 
     custom_data = np.column_stack(
         [
-
-            map_df[
-                "before_count"
-            ],
-
-            map_df[
-                "after_count"
-            ],
-
-            map_df[
-                "before_daily_avg"
-            ],
-
-            map_df[
-                "after_daily_avg"
-            ],
-
-            map_df[
-                metric_col
-            ]
+            map_df["before_count"],
+            map_df["after_count"],
+            map_df["before_daily_avg"],
+            map_df["after_daily_avg"],
+            map_df[metric_col]
         ]
     )
 
@@ -618,15 +610,17 @@ def make_seoul_map(
 
             geojson=geojson,
 
-            locations=map_df[
-                "region"
-            ],
+            # 서울 GeoJSON의 feature id가
+            # 자치구명으로 저장되어 있으므로 region 사용
+            locations=map_df["region"],
 
-            z=map_df[
-                metric_col
-            ],
+            z=map_df[metric_col],
 
             featureidkey="id",
+
+            # ------------------------------------------------
+            # 0을 중심으로 색상 범위 대칭 설정
+            # ------------------------------------------------
 
             zmin=-max_abs,
 
@@ -634,16 +628,14 @@ def make_seoul_map(
 
             zmid=0,
 
-            colorscale=(
-                CHANGE_COLORSCALE
-            ),
+            colorscale=CHANGE_COLORSCALE,
 
-            marker_line_color=(
-                "white"
-            ),
+            # 자치구 일반 경계
+            marker_line_color="white",
 
             marker_line_width=1.2,
 
+            # 범례
             colorbar=dict(
 
                 title=metric_name,
@@ -654,6 +646,10 @@ def make_seoul_map(
             ),
 
             customdata=custom_data,
+
+            # ------------------------------------------------
+            # Hover 정보
+            # ------------------------------------------------
 
             hovertemplate=(
 
@@ -685,59 +681,80 @@ def make_seoul_map(
     )
 
 
-   # --------------------------------------------------------
-# 기존 규제지역
-# 강남·서초·송파·용산
-# → 진한 적색 + 노란색 경계선
-# --------------------------------------------------------
+    # ========================================================
+    # 5. 기존 규제지역 4개
+    #
+    # 강남구
+    # 서초구
+    # 송파구
+    # 용산구
+    #
+    # 데이터 색상과 혼동하지 않도록
+    # 회색 면 + 노란색 굵은 경계선으로 표시
+    # ========================================================
 
-fig.add_trace(
+    fig.add_trace(
 
-    go.Choropleth(
+        go.Choropleth(
 
-        geojson=geojson,
+            geojson=geojson,
 
-        locations=(
-            SEOUL_EXISTING_REGULATED
-        ),
+            locations=SEOUL_EXISTING_REGULATED,
 
-        z=[1, 1, 1, 1],
+            z=[
+                1,
+                1,
+                1,
+                1
+            ],
 
-        featureidkey="id",
+            featureidkey="id",
 
-        # 기존 규제지역 내부 색상
-        colorscale=[
+            # ------------------------------------------------
+            # 내부 색상은 회색
+            #
+            # 빨강을 사용하면
+            # "거래량 감소지역"과 혼동될 수 있으므로
+            # 회색으로 구분
+            # ------------------------------------------------
 
-            [0, "#7f0000"],
-            [1, "#7f0000"]
-        ],
+            colorscale=[
+                [0, "#D9D9D9"],
+                [1, "#D9D9D9"]
+            ],
 
-        showscale=False,
+            showscale=False,
 
-        # ====================================================
-        # 기존 규제지역 경계 = 노란색
-        # ====================================================
+            # ------------------------------------------------
+            # 핵심 수정
+            # 기존 규제지역 = 노란색 경계선
+            # ------------------------------------------------
 
-        marker_line_color="#FFD400",
+            marker_line_color="#FFD400",
 
-        marker_line_width=4,
+            marker_line_width=4,
 
-        name="기존 규제지역",
+            name="기존 규제지역",
 
-        hovertemplate=(
+            hovertemplate=(
 
-            "<b>%{location}</b>"
-            "<br><br>기존 규제지역"
-            "<br>강남·서초·송파·용산"
-            "<br>이번 변화량 분석에서는 제외"
+                "<b>%{location}</b>"
+                "<br><br>"
 
-            "<extra></extra>"
+                "10·15 대책 이전 기존 규제지역"
+                "<br>"
+
+                "이번 거래량 변화 분석에서는 제외"
+
+                "<extra></extra>"
+            )
         )
     )
-)
-    # --------------------------------------------------------
-    # 지도 라벨
-    # --------------------------------------------------------
+
+
+    # ========================================================
+    # 6. 지도 라벨 데이터 가져오기
+    # ========================================================
 
     label_df = get_geo_label_data(
         geojson
@@ -746,94 +763,126 @@ fig.add_trace(
 
     if not label_df.empty:
 
-        label_df[
-            "label_name"
-        ] = label_df[
-            "feature_id"
-        ]
 
+        # GeoJSON의 feature id가 자치구명
+        label_df["label_name"] = (
+            label_df["feature_id"]
+        )
+
+
+        # ----------------------------------------------------
+        # 신규 규제지역 21개
+        # ----------------------------------------------------
 
         analysis_labels = label_df[
+
             ~label_df[
                 "feature_id"
             ].isin(
                 SEOUL_EXISTING_REGULATED
             )
-        ]
 
+        ].copy()
+
+
+        # ----------------------------------------------------
+        # 기존 규제지역 4개
+        # ----------------------------------------------------
 
         existing_labels = label_df[
+
             label_df[
                 "feature_id"
             ].isin(
                 SEOUL_EXISTING_REGULATED
             )
-        ]
+
+        ].copy()
 
 
-        fig.add_trace(
+        # ====================================================
+        # 7. 신규 규제지역 자치구 이름 표시
+        # ====================================================
 
-            go.Scattergeo(
+        if not analysis_labels.empty:
 
-                lon=analysis_labels[
-                    "label_lon"
-                ],
+            fig.add_trace(
 
-                lat=analysis_labels[
-                    "label_lat"
-                ],
+                go.Scattergeo(
 
-                text=analysis_labels[
-                    "label_name"
-                ],
+                    lon=analysis_labels[
+                        "label_lon"
+                    ],
 
-                mode="text",
+                    lat=analysis_labels[
+                        "label_lat"
+                    ],
 
-                textfont=dict(
-                    size=10,
-                    color="#222222"
-                ),
+                    text=analysis_labels[
+                        "label_name"
+                    ],
 
-                hoverinfo="skip",
+                    mode="text",
 
-                showlegend=False
+                    textfont=dict(
+
+                        size=10,
+
+                        color="#222222"
+                    ),
+
+                    hoverinfo="skip",
+
+                    showlegend=False
+                )
             )
-        )
 
 
-        fig.add_trace(
+        # ====================================================
+        # 8. 기존 규제지역 이름 표시
+        # ====================================================
 
-            go.Scattergeo(
+        if not existing_labels.empty:
 
-                lon=existing_labels[
-                    "label_lon"
-                ],
+            fig.add_trace(
 
-                lat=existing_labels[
-                    "label_lat"
-                ],
+                go.Scattergeo(
 
-                text=existing_labels[
-                    "label_name"
-                ],
+                    lon=existing_labels[
+                        "label_lon"
+                    ],
 
-                mode="text",
+                    lat=existing_labels[
+                        "label_lat"
+                    ],
 
-                textfont=dict(
-                    size=11,
-                    color="white"
-                ),
+                    text=existing_labels[
+                        "label_name"
+                    ],
 
-                hoverinfo="skip",
+                    mode="text",
 
-                showlegend=False
+                    textfont=dict(
+
+                        size=11,
+
+                        # 회색 내부이므로
+                        # 검정 계열 글씨 사용
+                        color="#333333",
+
+                        family="Arial Black"
+                    ),
+
+                    hoverinfo="skip",
+
+                    showlegend=False
+                )
             )
-        )
 
 
-    # --------------------------------------------------------
-    # 지도 스타일
-    # --------------------------------------------------------
+    # ========================================================
+    # 9. 지도 범위 설정
+    # ========================================================
 
     fig.update_geos(
 
@@ -844,6 +893,10 @@ fig.add_trace(
         projection_type="mercator"
     )
 
+
+    # ========================================================
+    # 10. 지도 Layout
+    # ========================================================
 
     fig.update_layout(
 
@@ -856,12 +909,13 @@ fig.add_trace(
             r=0,
             t=10,
             b=0
-        )
+        ),
+
+        showlegend=False
     )
 
 
     return fig
-
 
 # ============================================================
 # 11. 경기도 지도
