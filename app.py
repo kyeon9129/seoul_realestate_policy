@@ -1,14 +1,9 @@
-# ============================================================
-# 서울·경기 10·15 부동산 정책 거래량 변화 Dashboard
-# Streamlit 전용 app.py
-# ============================================================
-
 from pathlib import Path
 import json
+import hashlib
 
 import numpy as np
 import pandas as pd
-
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -30,45 +25,24 @@ st.set_page_config(
 # 2. 분석 기준
 # ============================================================
 
-POLICY_DATE = pd.Timestamp(
-    "2025-10-15"
-)
+POLICY_DATE = pd.Timestamp("2025-10-15")
 
-BEFORE_START = pd.Timestamp(
-    "2025-04-15"
-)
+BEFORE_START = pd.Timestamp("2025-04-15")
+BEFORE_END = pd.Timestamp("2025-10-14")
 
-BEFORE_END = pd.Timestamp(
-    "2025-10-14"
-)
-
-AFTER_START = pd.Timestamp(
-    "2025-10-15"
-)
-
-AFTER_END = pd.Timestamp(
-    "2026-04-14"
-)
-
+AFTER_START = pd.Timestamp("2025-10-15")
+AFTER_END = pd.Timestamp("2026-04-14")
 
 BEFORE_DAYS = (
-    BEFORE_END
-    - BEFORE_START
+    BEFORE_END - BEFORE_START
 ).days + 1
-
 
 AFTER_DAYS = (
-    AFTER_END
-    - AFTER_START
+    AFTER_END - AFTER_START
 ).days + 1
 
 
-# ============================================================
-# 서울 기존 규제지역
-# ============================================================
-
 SEOUL_EXISTING_REGULATED = [
-
     "강남구",
     "서초구",
     "송파구",
@@ -76,24 +50,11 @@ SEOUL_EXISTING_REGULATED = [
 ]
 
 
-# ============================================================
-# 지도 색상
-#
-# 빨강 = 거래량 감소
-# 흰색 = 변화 적음
-# 파랑 = 거래량 증가
-# ============================================================
-
 CHANGE_COLORSCALE = [
-
     [0.00, "#9c0000"],
-
     [0.25, "#d6604d"],
-
     [0.50, "#f7f7f7"],
-
     [0.75, "#4393c3"],
-
     [1.00, "#2166ac"],
 ]
 
@@ -106,81 +67,50 @@ st.markdown(
     """
     <style>
 
-    /* 전체 페이지 */
     .block-container {
-
         padding-top: 1.4rem;
         padding-bottom: 2.5rem;
-
         max-width: 1800px;
     }
 
-
-    /* 제목 */
     h1 {
-
         font-weight: 760;
-
         letter-spacing: -1.5px;
     }
 
-
     h2,
     h3 {
-
         letter-spacing: -0.6px;
     }
 
-
-    /* Sidebar */
     [data-testid="stSidebar"] {
-
         background-color: #fafafa;
     }
 
-
-    /* KPI 카드 */
     [data-testid="stMetric"] {
-
         background: #ffffff;
-
         border: 1px solid #e8e8e8;
-
         border-radius: 10px;
-
         padding: 12px;
     }
 
-
-    /* 탭 글자 */
     button[data-baseweb="tab"] {
-
         font-size: 0.90rem;
-
         font-weight: 650;
-
         padding-left: 0.7rem;
-
         padding-right: 0.7rem;
     }
 
-
-    /* 탭 간격 */
     div[data-baseweb="tab-list"] {
-
         gap: 0.2rem;
     }
 
-
-    /* 세로 간격 */
     [data-testid="stVerticalBlock"] {
-
         gap: 0.75rem;
     }
 
     </style>
     """,
-
     unsafe_allow_html=True,
 )
 
@@ -195,67 +125,46 @@ BASE_DIR = (
     .parent
 )
 
-
 DATA_DIR = (
     BASE_DIR
     / "data"
 )
 
 
-# ============================================================
-# 필요한 데이터
-# ============================================================
-
 FILES = {
 
-    # --------------------------------------------------------
     # 서울
-    # --------------------------------------------------------
-
     "seoul_summary":
-        DATA_DIR
-        / "seoul_policy_summary.csv",
+        DATA_DIR / "seoul_policy_summary.csv",
 
     "seoul_daily":
-        DATA_DIR
-        / "seoul_daily_transactions.csv",
+        DATA_DIR / "seoul_daily_transactions.csv",
 
     "seoul_district_daily":
-        DATA_DIR
-        / "seoul_district_daily.csv",
+        DATA_DIR / "seoul_district_daily.csv",
 
     "seoul_monthly":
-        DATA_DIR
-        / "seoul_monthly_transactions.csv",
+        DATA_DIR / "seoul_monthly_transactions.csv",
 
     "seoul_geojson":
-        DATA_DIR
-        / "seoul_policy_map.geojson",
+        DATA_DIR / "seoul_policy_map.geojson",
 
 
-    # --------------------------------------------------------
     # 경기
-    # --------------------------------------------------------
-
     "gyeonggi_summary":
-        DATA_DIR
-        / "gyeonggi_policy_summary.csv",
+        DATA_DIR / "gyeonggi_policy_summary.csv",
 
     "gyeonggi_daily":
-        DATA_DIR
-        / "gyeonggi_daily_transactions.csv",
+        DATA_DIR / "gyeonggi_daily_transactions.csv",
 
     "gyeonggi_district_daily":
-        DATA_DIR
-        / "gyeonggi_district_daily.csv",
+        DATA_DIR / "gyeonggi_district_daily.csv",
 
     "gyeonggi_monthly":
-        DATA_DIR
-        / "gyeonggi_monthly_transactions.csv",
+        DATA_DIR / "gyeonggi_monthly_transactions.csv",
 
     "gyeonggi_geojson":
-        DATA_DIR
-        / "gyeonggi_policy_map.geojson",
+        DATA_DIR / "gyeonggi_policy_map.geojson",
 }
 
 
@@ -294,147 +203,137 @@ if missing_files:
 
 
 # ============================================================
-# 6. 데이터 로딩
+# 6. 파일 변경 감지
 # ============================================================
 
-@st.cache_data
-def load_data():
+def get_file_signature(
+    path
+):
+
+    sha = hashlib.md5()
+
+    with open(
+        path,
+        "rb"
+    ) as f:
+
+        while True:
+
+            chunk = f.read(
+                1024 * 1024
+            )
+
+            if not chunk:
+
+                break
+
+            sha.update(
+                chunk
+            )
+
+    return sha.hexdigest()
 
 
-    # --------------------------------------------------------
-    # 서울
-    # --------------------------------------------------------
+DATA_SIGNATURE = "|".join(
 
-    seoul_summary = pd.read_csv(
-
-        FILES[
-            "seoul_summary"
-        ]
+    get_file_signature(
+        path
     )
 
+    for path
+    in FILES.values()
+)
+
+
+# ============================================================
+# 7. 데이터 로딩
+# ============================================================
+
+@st.cache_data(
+    show_spinner=False
+)
+def load_data(
+    data_signature
+):
+
+    # 서울
+    seoul_summary = pd.read_csv(
+        FILES["seoul_summary"]
+    )
 
     seoul_daily = pd.read_csv(
-
-        FILES[
-            "seoul_daily"
-        ]
+        FILES["seoul_daily"]
     )
-
 
     seoul_district_daily = pd.read_csv(
-
-        FILES[
-            "seoul_district_daily"
-        ]
+        FILES["seoul_district_daily"]
     )
-
 
     seoul_monthly = pd.read_csv(
-
-        FILES[
-            "seoul_monthly"
-        ]
+        FILES["seoul_monthly"]
     )
 
 
     with open(
-
-        FILES[
-            "seoul_geojson"
-        ],
-
+        FILES["seoul_geojson"],
         "r",
-
         encoding="utf-8"
-
     ) as f:
 
-        seoul_geojson = (
-            json.load(f)
+        seoul_geojson = json.load(
+            f
         )
 
 
-    # --------------------------------------------------------
-    # 경기도
-    # --------------------------------------------------------
-
+    # 경기
     gyeonggi_summary = pd.read_csv(
-
-        FILES[
-            "gyeonggi_summary"
-        ]
+        FILES["gyeonggi_summary"]
     )
-
 
     gyeonggi_daily = pd.read_csv(
-
-        FILES[
-            "gyeonggi_daily"
-        ]
+        FILES["gyeonggi_daily"]
     )
-
 
     gyeonggi_district_daily = pd.read_csv(
-
-        FILES[
-            "gyeonggi_district_daily"
-        ]
+        FILES["gyeonggi_district_daily"]
     )
 
-
     gyeonggi_monthly = pd.read_csv(
-
-        FILES[
-            "gyeonggi_monthly"
-        ]
+        FILES["gyeonggi_monthly"]
     )
 
 
     with open(
-
-        FILES[
-            "gyeonggi_geojson"
-        ],
-
+        FILES["gyeonggi_geojson"],
         "r",
-
         encoding="utf-8"
-
     ) as f:
 
-        gyeonggi_geojson = (
-            json.load(f)
+        gyeonggi_geojson = json.load(
+            f
         )
 
 
-    # --------------------------------------------------------
-    # 날짜형 변환
-    # --------------------------------------------------------
-
+    # 날짜형
     seoul_daily[
         "deal_date"
     ] = pd.to_datetime(
-
         seoul_daily[
             "deal_date"
         ]
     )
 
-
     seoul_district_daily[
         "deal_date"
     ] = pd.to_datetime(
-
         seoul_district_daily[
             "deal_date"
         ]
     )
 
-
     seoul_monthly[
         "year_month"
     ] = pd.to_datetime(
-
         seoul_monthly[
             "year_month"
         ]
@@ -444,27 +343,22 @@ def load_data():
     gyeonggi_daily[
         "deal_date"
     ] = pd.to_datetime(
-
         gyeonggi_daily[
             "deal_date"
         ]
     )
 
-
     gyeonggi_district_daily[
         "deal_date"
     ] = pd.to_datetime(
-
         gyeonggi_district_daily[
             "deal_date"
         ]
     )
 
-
     gyeonggi_monthly[
         "year_month"
     ] = pd.to_datetime(
-
         gyeonggi_monthly[
             "year_month"
         ]
@@ -472,55 +366,40 @@ def load_data():
 
 
     return (
-
         seoul_summary,
-
         seoul_daily,
-
         seoul_district_daily,
-
         seoul_monthly,
-
         seoul_geojson,
 
         gyeonggi_summary,
-
         gyeonggi_daily,
-
         gyeonggi_district_daily,
-
         gyeonggi_monthly,
-
-        gyeonggi_geojson,
+        gyeonggi_geojson
     )
 
 
 (
     seoul_summary,
-
     seoul_daily,
-
     seoul_district_daily,
-
     seoul_monthly,
-
     seoul_geojson,
 
     gyeonggi_summary,
-
     gyeonggi_daily,
-
     gyeonggi_district_daily,
-
     gyeonggi_monthly,
+    gyeonggi_geojson
 
-    gyeonggi_geojson,
-
-) = load_data()
+) = load_data(
+    DATA_SIGNATURE
+)
 
 
 # ============================================================
-# 7. Summary 데이터 정리
+# 8. Summary 전처리
 # ============================================================
 
 def prepare_summary(
@@ -533,15 +412,12 @@ def prepare_summary(
     numeric_columns = [
 
         "before_count",
-
         "after_count",
 
         "before_daily_avg",
-
         "after_daily_avg",
 
         "count_change_pct",
-
         "daily_avg_change_pct",
     ]
 
@@ -558,15 +434,10 @@ def prepare_summary(
             )
 
 
-    # --------------------------------------------------------
-    # 분석대상 내 거래점유율 계산
-    # --------------------------------------------------------
-
     total_before = (
         df["before_count"]
         .sum()
     )
-
 
     total_after = (
         df["after_count"]
@@ -608,15 +479,15 @@ def prepare_summary(
     )
 
 
-    # --------------------------------------------------------
-    # 경기 법정동 코드
-    # --------------------------------------------------------
-
     if "lawd_cd" in df.columns:
 
-        df["lawd_cd"] = (
+        df[
+            "lawd_cd"
+        ] = (
 
-            df["lawd_cd"]
+            df[
+                "lawd_cd"
+            ]
 
             .astype(str)
 
@@ -637,14 +508,13 @@ seoul_summary = prepare_summary(
     seoul_summary
 )
 
-
 gyeonggi_summary = prepare_summary(
     gyeonggi_summary
 )
 
 
 # ============================================================
-# 8. GeoJSON 라벨 위치
+# 9. GeoJSON 라벨 위치 추출
 # ============================================================
 
 def get_geo_label_data(
@@ -658,7 +528,6 @@ def get_geo_label_data(
         "features",
         []
     ):
-
 
         properties = feature.get(
             "properties",
@@ -678,7 +547,6 @@ def get_geo_label_data(
         lon = properties.get(
             "label_lon"
         )
-
 
         lat = properties.get(
             "label_lat"
@@ -702,7 +570,6 @@ def get_geo_label_data(
             lat = float(
                 lat
             )
-
 
         except (
             TypeError,
@@ -749,7 +616,141 @@ def get_geo_label_data(
 
 
 # ============================================================
-# 9. 정책 기준선
+# 10. GeoJSON 좌표 범위 확인
+# ============================================================
+
+def get_geojson_bounds(
+    geojson
+):
+
+    xs = []
+    ys = []
+
+
+    def collect_coordinates(
+        coords
+    ):
+
+        if not isinstance(
+            coords,
+            list
+        ):
+
+            return
+
+
+        if (
+            len(coords) >= 2
+            and isinstance(
+                coords[0],
+                (int, float)
+            )
+            and isinstance(
+                coords[1],
+                (int, float)
+            )
+        ):
+
+            xs.append(
+                float(
+                    coords[0]
+                )
+            )
+
+            ys.append(
+                float(
+                    coords[1]
+                )
+            )
+
+            return
+
+
+        for item in coords:
+
+            collect_coordinates(
+                item
+            )
+
+
+    for feature in geojson.get(
+        "features",
+        []
+    ):
+
+        geometry = feature.get(
+            "geometry",
+            {}
+        )
+
+
+        collect_coordinates(
+
+            geometry.get(
+                "coordinates",
+                []
+            )
+        )
+
+
+    if not xs:
+
+        return None
+
+
+    return {
+
+        "min_lon":
+            min(xs),
+
+        "min_lat":
+            min(ys),
+
+        "max_lon":
+            max(xs),
+
+        "max_lat":
+            max(ys),
+    }
+
+
+def is_korea_bounds(
+    bounds
+):
+
+    if bounds is None:
+
+        return False
+
+
+    return (
+
+        124
+        <= bounds["min_lon"]
+        <= 132
+
+        and
+
+        124
+        <= bounds["max_lon"]
+        <= 132
+
+        and
+
+        33
+        <= bounds["min_lat"]
+        <= 39.5
+
+        and
+
+        33
+        <= bounds["max_lat"]
+        <= 39.5
+    )
+
+
+# ============================================================
+# 11. 정책 기준선
 # ============================================================
 
 def add_policy_line(
@@ -813,7 +814,7 @@ def add_policy_line(
 
 
 # ============================================================
-# 10. 일별 거래량 그래프
+# 12. 일별 거래량 그래프
 # ============================================================
 
 def make_daily_chart(
@@ -826,7 +827,6 @@ def make_daily_chart(
     fig = go.Figure()
 
 
-    # 일별 거래량
     fig.add_trace(
 
         go.Scatter(
@@ -852,7 +852,6 @@ def make_daily_chart(
     )
 
 
-    # 14일 이동평균
     fig.add_trace(
 
         go.Scatter(
@@ -899,9 +898,13 @@ def make_daily_chart(
         height=height,
 
         margin=dict(
+
             l=10,
+
             r=10,
+
             t=45,
+
             b=10
         ),
 
@@ -924,7 +927,7 @@ def make_daily_chart(
 
 
 # ============================================================
-# 11. 지역 상세 데이터
+# 13. 지역 상세 데이터
 # ============================================================
 
 def prepare_region_daily(
@@ -933,22 +936,25 @@ def prepare_region_daily(
 ):
 
 
-    temp = district_daily[
+    temp = (
 
         district_daily[
-            "region"
-        ]
-        ==
-        selected_region
 
-    ][
+            district_daily[
+                "region"
+            ]
+            ==
+            selected_region
 
-        [
-            "deal_date",
-            "transaction_count"
-        ]
+        ][
 
-    ].copy()
+            [
+                "deal_date",
+                "transaction_count"
+            ]
+
+        ].copy()
+    )
 
 
     full_dates = pd.DataFrame({
@@ -1013,14 +1019,19 @@ def prepare_region_daily(
 
 
 # ============================================================
-# 12. 지역별 순위 그래프
+# 14. 지역별 순위 그래프
 # ============================================================
 
 def make_ranking_chart(
+
     summary,
+
     metric_col,
+
     metric_name,
+
     title,
+
     height=360,
 ):
 
@@ -1106,12 +1117,15 @@ def make_ranking_chart(
 
 
 # ============================================================
-# 13. 정책 전후 직접 비교 그래프
+# 15. 정책 전후 직접 비교 그래프
 # ============================================================
 
 def make_before_after_chart(
+
     summary,
+
     title,
+
     height=360,
 ):
 
@@ -1231,10 +1245,83 @@ def make_before_after_chart(
 
 
 # ============================================================
-# 14. 수도권 통합 지도
-#
-# 서울 GeoJSON + 경기 GeoJSON을
-# 하나의 Figure에 함께 표시
+# 16. 공통 데이터 표
+# ============================================================
+
+def show_chart_data(
+
+    df,
+
+    title="활용 데이터 보기",
+
+    columns=None,
+
+    sort_by=None,
+):
+
+
+    show_df = df.copy()
+
+
+    if columns is not None:
+
+        existing_columns = [
+
+            col
+
+            for col
+            in columns
+
+            if col
+            in show_df.columns
+        ]
+
+
+        show_df = show_df[
+            existing_columns
+        ]
+
+
+    if (
+        sort_by is not None
+        and sort_by
+        in show_df.columns
+    ):
+
+        show_df = (
+
+            show_df
+
+            .sort_values(
+                sort_by
+            )
+
+            .reset_index(
+                drop=True
+            )
+        )
+
+
+    with st.expander(
+
+        f"📊 {title}",
+
+        expanded=False
+    ):
+
+
+        st.dataframe(
+
+            show_df,
+
+            use_container_width=True,
+
+            hide_index=True
+        )
+
+
+# ============================================================
+# 17. 수도권 통합 지도
 # ============================================================
 
 def make_capital_map(
@@ -1307,9 +1394,9 @@ def make_capital_map(
     )
 
 
-    # ========================================================
-    # 서울 + 경기 공통 색상 범위
-    # ========================================================
+    # --------------------------------------------------------
+    # 서울 + 경기 동일 색상 범위
+    # --------------------------------------------------------
 
     combined_values = pd.concat(
 
@@ -1358,7 +1445,7 @@ def make_capital_map(
 
 
     # ========================================================
-    # 경기도 비규제 / 비분석지역
+    # 경기도 비규제 지역
     # ========================================================
 
     gyeonggi_all_ids = [
@@ -1372,7 +1459,6 @@ def make_capital_map(
         )
 
         for feature
-
         in gyeonggi_geojson.get(
             "features",
             []
@@ -1400,10 +1486,7 @@ def make_capital_map(
     ]
 
 
-    if len(
-        gyeonggi_unregulated_ids
-    ) > 0:
-
+    if gyeonggi_unregulated_ids:
 
         fig.add_trace(
 
@@ -1453,7 +1536,7 @@ def make_capital_map(
 
 
     # ========================================================
-    # 경기도 신규 규제지역
+    # 경기 신규 규제지역
     # ========================================================
 
     gyeonggi_custom_data = (
@@ -1527,7 +1610,6 @@ def make_capital_map(
                 CHANGE_COLORSCALE
             ),
 
-            # 통합 색상바
             colorbar=dict(
 
                 title=metric_name,
@@ -1588,7 +1670,7 @@ def make_capital_map(
 
 
     # ========================================================
-    # 서울 신규 규제지역 21개
+    # 서울 신규 규제지역
     # ========================================================
 
     seoul_custom_data = (
@@ -1655,7 +1737,6 @@ def make_capital_map(
                 CHANGE_COLORSCALE
             ),
 
-            # 색상바는 경기 trace에서만 표시
             showscale=False,
 
             marker_line_color=(
@@ -1708,8 +1789,6 @@ def make_capital_map(
 
     # ========================================================
     # 서울 기존 규제지역
-    #
-    # 회색 + 노란색 테두리
     # ========================================================
 
     fig.add_trace(
@@ -1742,7 +1821,6 @@ def make_capital_map(
 
             showscale=False,
 
-            # 노란색 경계
             marker_line_color=(
                 "#FFD400"
             ),
@@ -1780,7 +1858,6 @@ def make_capital_map(
 
     if not seoul_labels.empty:
 
-
         seoul_labels[
             "label_name"
         ] = (
@@ -1791,7 +1868,6 @@ def make_capital_map(
         )
 
 
-        # 일반 21개구
         normal_labels = (
 
             seoul_labels[
@@ -1806,7 +1882,6 @@ def make_capital_map(
         )
 
 
-        # 기존 4개구
         existing_labels = (
 
             seoul_labels[
@@ -1910,7 +1985,7 @@ def make_capital_map(
 
 
     # ========================================================
-    # 경기도 규제지역 라벨
+    # 경기 규제지역 라벨
     # ========================================================
 
     gyeonggi_labels = (
@@ -1921,7 +1996,6 @@ def make_capital_map(
 
 
     if not gyeonggi_labels.empty:
-
 
         gyeonggi_labels[
             "feature_id"
@@ -2024,16 +2098,32 @@ def make_capital_map(
 
 
     # ========================================================
-    # 수도권 전체 지도 범위
+    # 수도권 지도 범위 고정
     # ========================================================
 
     fig.update_geos(
 
-        fitbounds="locations",
-
         visible=False,
 
         projection_type="mercator",
+
+        lonaxis_range=[
+            126.0,
+            128.2
+        ],
+
+        lataxis_range=[
+            36.5,
+            38.4
+        ],
+
+        showcountries=False,
+
+        showcoastlines=False,
+
+        showland=False,
+
+        showlakes=False,
 
         bgcolor="white"
     )
@@ -2041,7 +2131,6 @@ def make_capital_map(
 
     fig.update_layout(
 
-        # 왼쪽 패널 전체 높이
         height=1080,
 
         paper_bgcolor="white",
@@ -2065,7 +2154,7 @@ def make_capital_map(
 
 
 # ============================================================
-# 15. HEADER
+# 18. Header
 # ============================================================
 
 st.title(
@@ -2080,7 +2169,24 @@ st.caption(
 
 
 # ============================================================
-# 16. SIDEBAR
+# GeoJSON 좌표 확인
+# ============================================================
+
+seoul_bounds = (
+    get_geojson_bounds(
+        seoul_geojson
+    )
+)
+
+gyeonggi_bounds = (
+    get_geojson_bounds(
+        gyeonggi_geojson
+    )
+)
+
+
+# ============================================================
+# 19. Sidebar
 # ============================================================
 
 with st.sidebar:
@@ -2157,14 +2263,63 @@ with st.sidebar:
     )
 
 
+    # --------------------------------------------------------
+    # 좌표 진단
+    # --------------------------------------------------------
+
+    with st.expander(
+        "지도 좌표 진단",
+        expanded=False
+    ):
+
+
+        st.write(
+            "서울 GeoJSON"
+        )
+
+        st.json(
+            seoul_bounds
+        )
+
+
+        st.write(
+            "경기 GeoJSON"
+        )
+
+        st.json(
+            gyeonggi_bounds
+        )
+
+
 # ============================================================
-# 17. 메인 레이아웃
-#
-# 왼쪽
-# 수도권 통합 지도
-#
-# 오른쪽
-# 탭 + 서울/경기 데이터
+# 좌표 오류 경고
+# ============================================================
+
+if not is_korea_bounds(
+    seoul_bounds
+):
+
+    st.error(
+        "서울 GeoJSON 좌표 범위가 "
+        "한국 좌표 범위를 벗어났습니다."
+    )
+
+
+if not is_korea_bounds(
+    gyeonggi_bounds
+):
+
+    st.error(
+
+        "경기도 GeoJSON 좌표 범위가 "
+        "한국 좌표 범위를 벗어났습니다. "
+        "data/gyeonggi_policy_map.geojson을 "
+        "다시 확인해주세요."
+    )
+
+
+# ============================================================
+# 20. 메인 레이아웃
 # ============================================================
 
 map_col, data_col = st.columns(
@@ -2179,8 +2334,7 @@ map_col, data_col = st.columns(
 
 
 # ============================================================
-# 18. 왼쪽 영역
-# 수도권 통합 지도
+# 왼쪽 - 수도권 통합 지도
 # ============================================================
 
 with map_col:
@@ -2197,6 +2351,7 @@ with map_col:
 
 
         st.caption(
+
             "빨강 = 거래량 감소 · "
             "파랑 = 거래량 증가 · "
             "회색 = 경기 비규제·비분석지역 · "
@@ -2239,9 +2394,89 @@ with map_col:
         )
 
 
+        # ----------------------------------------------------
+        # 통합지도 활용 데이터
+        # ----------------------------------------------------
+
+        with st.expander(
+
+            "🗺️ 수도권 지도 활용 데이터 보기",
+
+            expanded=False
+        ):
+
+
+            st.markdown(
+                "**서울 신규 규제지역**"
+            )
+
+
+            st.dataframe(
+
+                seoul_summary[
+
+                    [
+                        "region",
+                        "before_count",
+                        "after_count",
+                        "daily_avg_change_pct",
+                        "share_change_pp",
+                    ]
+                ],
+
+                use_container_width=True,
+
+                hide_index=True
+            )
+
+
+            st.markdown(
+                "**경기도 신규 규제지역**"
+            )
+
+
+            gg_map_cols = [
+
+                "region",
+
+                "parent_city",
+
+                "before_count",
+
+                "after_count",
+
+                "daily_avg_change_pct",
+
+                "share_change_pp",
+            ]
+
+
+            gg_map_cols = [
+
+                col
+
+                for col
+                in gg_map_cols
+
+                if col
+                in gyeonggi_summary.columns
+            ]
+
+
+            st.dataframe(
+
+                gyeonggi_summary[
+                    gg_map_cols
+                ],
+
+                use_container_width=True,
+
+                hide_index=True
+            )
+
+
 # ============================================================
-# 19. 오른쪽 영역
-# TAB
+# 오른쪽 - Tabs
 # ============================================================
 
 with data_col:
@@ -2249,11 +2484,8 @@ with data_col:
 
     (
         ranking_tab,
-
         trend_tab,
-
         detail_tab,
-
         compare_tab,
 
     ) = st.tabs(
@@ -2272,16 +2504,11 @@ with data_col:
 
 
     # ========================================================
-    # TAB 1
-    # 지역별 거래시장 변화 순위
+    # TAB 1. 지역별 거래시장 변화 순위
     # ========================================================
 
     with ranking_tab:
 
-
-        # ----------------------------------------------------
-        # 서울
-        # ----------------------------------------------------
 
         with st.container(
             border=True
@@ -2322,9 +2549,39 @@ with data_col:
             )
 
 
-        # ----------------------------------------------------
-        # 경기
-        # ----------------------------------------------------
+            show_chart_data(
+
+                seoul_summary,
+
+                title=(
+                    "서울 지역별 거래시장 변화 "
+                    "활용 데이터"
+                ),
+
+                columns=[
+
+                    "region",
+
+                    "before_count",
+
+                    "after_count",
+
+                    "before_daily_avg",
+
+                    "after_daily_avg",
+
+                    "daily_avg_change_pct",
+
+                    "before_share_pct",
+
+                    "after_share_pct",
+
+                    "share_change_pp",
+                ],
+
+                sort_by=metric_col
+            )
+
 
         with st.container(
             border=True
@@ -2365,17 +2622,48 @@ with data_col:
             )
 
 
+            show_chart_data(
+
+                gyeonggi_summary,
+
+                title=(
+                    "경기도 지역별 거래시장 변화 "
+                    "활용 데이터"
+                ),
+
+                columns=[
+
+                    "region",
+
+                    "parent_city",
+
+                    "before_count",
+
+                    "after_count",
+
+                    "before_daily_avg",
+
+                    "after_daily_avg",
+
+                    "daily_avg_change_pct",
+
+                    "before_share_pct",
+
+                    "after_share_pct",
+
+                    "share_change_pp",
+                ],
+
+                sort_by=metric_col
+            )
+
+
     # ========================================================
-    # TAB 2
-    # 정책 발표 전후 거래량 추이
+    # TAB 2. 정책 발표 전후 거래량 추이
     # ========================================================
 
     with trend_tab:
 
-
-        # ----------------------------------------------------
-        # 서울
-        # ----------------------------------------------------
 
         with st.container(
             border=True
@@ -2412,9 +2700,25 @@ with data_col:
             )
 
 
-        # ----------------------------------------------------
-        # 경기
-        # ----------------------------------------------------
+            show_chart_data(
+
+                seoul_daily,
+
+                title=(
+                    "서울 일별 거래량 "
+                    "활용 데이터"
+                ),
+
+                columns=[
+
+                    "deal_date",
+
+                    "transaction_count",
+
+                    "rolling_14d",
+                ]
+            )
+
 
         with st.container(
             border=True
@@ -2451,16 +2755,35 @@ with data_col:
             )
 
 
+            show_chart_data(
+
+                gyeonggi_daily,
+
+                title=(
+                    "경기도 일별 거래량 "
+                    "활용 데이터"
+                ),
+
+                columns=[
+
+                    "deal_date",
+
+                    "transaction_count",
+
+                    "rolling_14d",
+                ]
+            )
+
+
     # ========================================================
-    # TAB 3
-    # 지역 상세 비교
+    # TAB 3. 지역 상세 비교
     # ========================================================
 
     with detail_tab:
 
 
         # ----------------------------------------------------
-        # 서울 상세
+        # 서울
         # ----------------------------------------------------
 
         with st.container(
@@ -2584,8 +2907,29 @@ with data_col:
             )
 
 
+            show_chart_data(
+
+                selected_seoul_daily,
+
+                title=(
+
+                    f"{selected_seoul} "
+                    "일별 거래량 활용 데이터"
+                ),
+
+                columns=[
+
+                    "deal_date",
+
+                    "transaction_count",
+
+                    "rolling_14d",
+                ]
+            )
+
+
         # ----------------------------------------------------
-        # 경기 상세
+        # 경기
         # ----------------------------------------------------
 
         with st.container(
@@ -2709,17 +3053,33 @@ with data_col:
             )
 
 
+            show_chart_data(
+
+                selected_gyeonggi_daily,
+
+                title=(
+
+                    f"{selected_gyeonggi} "
+                    "일별 거래량 활용 데이터"
+                ),
+
+                columns=[
+
+                    "deal_date",
+
+                    "transaction_count",
+
+                    "rolling_14d",
+                ]
+            )
+
+
     # ========================================================
-    # TAB 4
-    # 정책 전후 거래량 직접 비교
+    # TAB 4. 정책 전후 거래량 직접 비교
     # ========================================================
 
     with compare_tab:
 
-
-        # ----------------------------------------------------
-        # 서울
-        # ----------------------------------------------------
 
         with st.container(
             border=True
@@ -2756,9 +3116,31 @@ with data_col:
             )
 
 
-        # ----------------------------------------------------
-        # 경기
-        # ----------------------------------------------------
+            show_chart_data(
+
+                seoul_summary,
+
+                title=(
+                    "서울 정책 전후 거래량 "
+                    "활용 데이터"
+                ),
+
+                columns=[
+
+                    "region",
+
+                    "before_count",
+
+                    "after_count",
+
+                    "daily_avg_change_pct",
+                ],
+
+                sort_by=(
+                    "daily_avg_change_pct"
+                )
+            )
+
 
         with st.container(
             border=True
@@ -2795,8 +3177,36 @@ with data_col:
             )
 
 
+            show_chart_data(
+
+                gyeonggi_summary,
+
+                title=(
+                    "경기도 정책 전후 거래량 "
+                    "활용 데이터"
+                ),
+
+                columns=[
+
+                    "region",
+
+                    "parent_city",
+
+                    "before_count",
+
+                    "after_count",
+
+                    "daily_avg_change_pct",
+                ],
+
+                sort_by=(
+                    "daily_avg_change_pct"
+                )
+            )
+
+
 # ============================================================
-# 20. 분석 기준
+# 21. 분석 기준
 # ============================================================
 
 st.divider()
@@ -2811,14 +3221,9 @@ with st.expander(
         """
         ### 분석기간
 
-        - **정책 이전**  
-          2025.04.15 ~ 2025.10.14
-
-        - **정책 기준일**  
-          2025.10.15
-
-        - **정책 이후**  
-          2025.10.15 ~ 2026.04.14
+        - **정책 이전**: 2025.04.15 ~ 2025.10.14
+        - **정책 기준일**: 2025.10.15
+        - **정책 이후**: 2025.10.15 ~ 2026.04.14
 
 
         ### 서울
