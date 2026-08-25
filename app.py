@@ -2385,11 +2385,9 @@ with map_col:
 
             config={
 
-                "displayModeBar":
-                    False,
-
-                "scrollZoom":
-                    False,
+                "displayModeBar": True,
+                "scrollZoom": True,
+                "displaylogo": False,
             },
         )
 
