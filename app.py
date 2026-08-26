@@ -1117,39 +1117,30 @@ def make_ranking_chart(
 
 
 # ============================================================
-# 15. 정책 전후 직접 비교 그래프
+# 정책 전후 직접 비교 그래프
 # ============================================================
 
 def make_before_after_chart(
-
     summary,
-
     title,
-
     height=360,
 ):
-
 
     compare_df = (
 
         summary[
-
             [
                 "region",
                 "before_count",
                 "after_count"
             ]
-
         ]
 
         .melt(
-
             id_vars="region",
 
             value_vars=[
-
                 "before_count",
-
                 "after_count"
             ],
 
@@ -1160,21 +1151,13 @@ def make_before_after_chart(
     )
 
 
-    compare_df[
-        "period"
-    ] = (
+    compare_df["period"] = (
 
-        compare_df[
-            "period"
-        ]
+        compare_df["period"]
 
         .replace({
-
-            "before_count":
-                "정책 이전",
-
-            "after_count":
-                "정책 이후",
+            "before_count": "정책 이전",
+            "after_count": "정책 이후",
         })
     )
 
@@ -1195,16 +1178,19 @@ def make_before_after_chart(
 
         title=title,
 
+        # ====================================================
+        # 정책 전후 색상 지정
+        # ====================================================
+
+        color_discrete_map={
+            "정책 이전": "#006EC8",
+            "정책 이후": "#F28E2B",
+        },
+
         labels={
-
-            "region":
-                "",
-
-            "transaction_count":
-                "거래건수",
-
-            "period":
-                "기간",
+            "region": "",
+            "transaction_count": "거래건수",
+            "period": "기간",
         },
     )
 
@@ -1216,34 +1202,23 @@ def make_before_after_chart(
         height=height,
 
         margin=dict(
-
             l=0,
-
             r=10,
-
             t=45,
-
             b=10
         ),
 
         legend=dict(
-
             orientation="h",
-
             yanchor="bottom",
-
             y=1.02,
-
             xanchor="right",
-
             x=1
         ),
     )
 
 
     return fig
-
-
 # ============================================================
 # 16. 공통 데이터 표
 # ============================================================
